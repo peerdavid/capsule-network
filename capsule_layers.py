@@ -146,6 +146,13 @@ def margin_loss(Tk, v_norm):
     return L
 
 
+def euclidean_dist(y_pred, y_true):
+    """ Euclidian distance needed for the decoder distance between the image and the output 
+        of the decoder.
+    """
+    return K.sqrt(K.sum(K.square(y_pred - y_true), axis=-1))
+
+
 #
 # HELPERS
 #

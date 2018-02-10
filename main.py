@@ -11,7 +11,7 @@ from keras.datasets import mnist
 from keras.preprocessing.image import ImageDataGenerator
 
 import utils
-from capsule_layers import PrimaryCaps, DigitCaps, Length, Mask, margin_loss
+from capsule_layers import PrimaryCaps, DigitCaps, Length, Mask, margin_loss, euclidean_dist
 
 
 #
@@ -77,15 +77,15 @@ def create_model(input_shape, n_class, num_routing):
 
     # Create decoder
     y = layers.Input(shape=(n_class,))
-    masked_by_y = Mask()([digit_caps, y])    # The true label is used to mask the output of capsule layer. For training
-    masked = Mask()(digit_caps)              # Mask using the capsule with maximal length. For prediction
+    masked_by_y = Mask()([digit_caps, y])    # The true label is used to mask the output of capsule layer for training
+    masked = Mask()(digit_caps)              # Mask using the capsule with maximal length for prediction
 
     # Shared Decoder model in training and prediction
-    decoder = models.Sequential(name='decoder')
+    decoder = models.Sequential(name='Decoder')
     decoder.add(layers.Dense(512, activation='relu', input_dim=16*n_class))
     decoder.add(layers.Dense(1024, activation='relu'))
     decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
-    decoder.add(layers.Reshape(target_shape=input_shape, name='out_recon'))
+    decoder.add(layers.Reshape(target_shape=input_shape, name='DecoderOutput'))
 
     # Models for training and evaluation (prediction)
     train_model = models.Model([x, y], [out_caps, decoder(masked_by_y)])
@@ -121,10 +121,11 @@ def train(model, data, args):
 
     # compile the model
     model.compile(optimizer=optimizers.Adam(lr=args.lr),
-                  loss=[margin_loss, 'mse'],
-                  loss_weights=[1., args.lam_recon],
+                  loss=[margin_loss, euclidean_dist],
+                  loss_weights=[1., args.scale_reconstruction_loss],
                   metrics={'CapsNet': 'accuracy'})
 
+    # Generator with data augmentation as used in [1]
     def train_generator_with_augmentation(x, y, batch_size, shift_fraction=0.):
         train_datagen = ImageDataGenerator(width_shift_range=shift_fraction,
                                            height_shift_range=shift_fraction)  # shift up to 2 pixel for MNIST
@@ -133,12 +134,12 @@ def train(model, data, args):
             x_batch, y_batch = generator.next()
             yield ([x_batch, y_batch], [y_batch, x_batch])
 
-    model.fit_generator(generator=train_generator_with_augmentation(x_train, y_train, args.batch_size, args.shift_fraction),
+    generator = train_generator_with_augmentation(x_train, y_train, args.batch_size, args.shift_fraction)
+    model.fit_generator(generator=generator,
                         steps_per_epoch=int(y_train.shape[0] / args.batch_size),
                         epochs=args.epochs,
-                        validation_data=[[x_test, y_test], [y_test, x_test]],
+                        validation_data=[[x_test, y_test], [y_test, x_test]],   # Note: For the decoder the input is the label and the output the image
                         callbacks=[log, tb, checkpoint, lr_decay])
-
 
     model.save_weights(args.save_dir + '/trained_model.h5')
     print('Trained model saved to \'%s/trained_model.h5\'' % args.save_dir)
@@ -191,7 +192,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Capsule Network on MNIST.")
     parser.add_argument('--epochs', default=50, type=int)
 
-    parser.add_argument('--batch_size', default=100, type=int)
+    parser.add_argument('--batch_size', default=128, type=int)
 
     parser.add_argument('--lr', default=0.001, type=float,
                         help="Initial learning rate")
@@ -199,7 +200,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr_decay', default=0.9, type=float,
                         help="The value multiplied by lr at each epoch. Set a larger value for larger epochs")
 
-    parser.add_argument('--lam_recon', default=0.392, type=float,
+    parser.add_argument('--scale_reconstruction_loss', default=0.0005, type=float,
                         help="The coefficient for the loss of decoder")
 
     parser.add_argument('-r', '--num_routing', default=3, type=int,
