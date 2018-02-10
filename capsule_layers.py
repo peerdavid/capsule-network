@@ -127,7 +127,9 @@ def squashing(vectors, axis=-1):
 
     # Shape (None, n) if keepdims=False, so keep the dim otherwise we cannot squash in the next line ;)
     vector_squared_norm = K.sum(K.square(vectors), axis=axis, keepdims=True)
-    return (vector_squared_norm / (1 + vector_squared_norm)) * (vectors / K.sqrt(vector_squared_norm))
+
+    # Without K.epsilon() we run into a loss of nan after about 10 epochs because of numerical errors...
+    return (vector_squared_norm / (1 + vector_squared_norm)) * (vectors / K.sqrt(vector_squared_norm + K.epsilon()))
 
 
 def margin_loss(Tk, v_norm):
@@ -148,9 +150,9 @@ def margin_loss(Tk, v_norm):
 
 def euclidean_dist(y_pred, y_true):
     """ Euclidian distance needed for the decoder distance between the image and the output 
-        of the decoder.
+        of the decoder. Avoid numerical errors by adding epsilon...
     """
-    return K.sqrt(K.sum(K.square(y_pred - y_true), axis=-1))
+    return K.sqrt(K.sum(K.square(y_pred - y_true), axis=-1) + K.epsilon())
 
 
 #
