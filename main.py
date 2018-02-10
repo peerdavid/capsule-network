@@ -38,8 +38,9 @@ def main(args):
     model.summary()
 
     # Run training / testing
-    if args.weights is not None:  # init the model weights with provided one
+    if args.weights is not None and os.path.exists(args.weights):
         model.load_weights(args.weights)
+        print("Successfully loaded weights file %s" % args.weights)
     
     if not args.testing:
         print("\n" + "=" * 40 + " TRAIN " + "=" * 40)
@@ -114,7 +115,7 @@ def train(model, data, args):
     log = callbacks.CSVLogger(args.save_dir + '/log.csv')
     tb = callbacks.TensorBoard(log_dir=args.save_dir + '/tensorboard-logs',
                                batch_size=args.batch_size, histogram_freq=int(args.debug))
-    checkpoint = callbacks.ModelCheckpoint(args.save_dir + '/weights-{epoch:02d}.h5', monitor='val_capsnet_acc',
+    checkpoint = callbacks.ModelCheckpoint(args.save_dir + '/weights-{epoch:02d}.h5', monitor='val_CapsNet_acc',
                                            save_best_only=True, save_weights_only=True, verbose=1)
     lr_decay = callbacks.LearningRateScheduler(schedule=lambda epoch: args.lr * (args.lr_decay ** epoch))
 
@@ -122,7 +123,7 @@ def train(model, data, args):
     model.compile(optimizer=optimizers.Adam(lr=args.lr),
                   loss=[margin_loss, 'mse'],
                   loss_weights=[1., args.lam_recon],
-                  metrics={'capsnet': 'accuracy'})
+                  metrics={'CapsNet': 'accuracy'})
 
     def train_generator_with_augmentation(x, y, batch_size, shift_fraction=0.):
         train_datagen = ImageDataGenerator(width_shift_range=shift_fraction,
@@ -188,7 +189,7 @@ def manipulate_latent(model, data, args):
 #
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Capsule Network on MNIST.")
-    parser.add_argument('--epochs', default=2, type=int)
+    parser.add_argument('--epochs', default=50, type=int)
 
     parser.add_argument('--batch_size', default=100, type=int)
 
