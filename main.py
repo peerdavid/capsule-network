@@ -11,7 +11,7 @@ from keras.datasets import mnist
 from keras.preprocessing.image import ImageDataGenerator
 
 import utils
-from capsule_layers import PrimaryCaps, DigitCaps, Length, Mask, margin_loss, euclidean_dist
+from capsule_layers import PrimaryCaps, DigitCaps, Length, Mask, margin_loss, reconstruction_loss
 
 
 #
@@ -121,9 +121,9 @@ def train(model, data, args):
 
     # compile the model
     model.compile(optimizer=optimizers.Adam(lr=args.lr),
-                  loss=[margin_loss, euclidean_dist],
-                  loss_weights=[1., args.scale_reconstruction_loss],
-                  metrics={'CapsNet': 'accuracy'})
+                  loss=[margin_loss, reconstruction_loss],              # We scale down this reconstruction loss by 0.0005 so that
+                  loss_weights=[1., args.scale_reconstruction_loss],    # ...it does not dominate the margin loss during training.
+                  metrics={'CapsNet': 'accuracy'})                      
 
     # Generator with data augmentation as used in [1]
     def train_generator_with_augmentation(x, y, batch_size, shift_fraction=0.):

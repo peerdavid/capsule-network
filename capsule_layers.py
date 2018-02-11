@@ -148,12 +148,11 @@ def margin_loss(Tk, v_norm):
     return L
 
 
-def euclidean_dist(y_pred, y_true):
-    """ Euclidian distance needed for the decoder distance between the image and the output 
-        of the decoder. Avoid numerical errors by adding epsilon because the derivative of 
-        x ^ 1/2 is 1/2 * 1/(x^1/2) and therefore we avoid a null division
+def reconstruction_loss(y_true, y_pred):
+    """ We minimize the sum of squared differences between the outputs of the logistic
+        units and the pixel intensities.
     """
-    return K.sqrt(K.sum(K.square(y_pred - y_true), axis=-1) + K.epsilon())
+    return K.sum(K.square(y_pred - y_true ), axis=-1)
 
 
 #
