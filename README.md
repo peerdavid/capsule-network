@@ -2,8 +2,8 @@
 Kears implementation of CapsuleNet [1] based on the already existing implementations [2] and [3]. 
 
 ## Differences to [1]
-1. Added epsilon to margin_loss to avoid numerical errors
-2. Added epsilon to euclidean_distance of generator to avoid numerical errors
+1. Added epsilon to margin_loss to avoid numerical errors during forward pass
+2. Added epsilon to euclidean_distance of generator to avoid numerical errors during backward pass
 
 # References:
 [[1]](https://arxiv.org/pdf/1710.09829.pdf) Hinton et al., Dynamic Routing Between Capsules, NIPS 2017 <br />
