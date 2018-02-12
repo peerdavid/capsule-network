@@ -37,49 +37,36 @@ class DigitCaps(Layer):
         super(DigitCaps, self).build(input_shape)
 
 
-    def call(self, s, training = False):
-        # s.shape=[None, input_num_capsule, input_dim_capsule]
-        # s_expand.shape=[None, 1, input_num_capsule, input_dim_capsule]
-        s_expand = K.expand_dims(s, 1)
+    def call(self, u, training = False):
+        batch_size = tf.shape(u)[0]
+        
+        # First of all we add one dimension to the input and duplicate it num_capsule times to get the output of the
+        # previous layer as input for every capsule of the following layer.
+        # Output shape = (batch_size, num_capsule, input_num_capsule, input_dim)
+        u_expand = K.expand_dims(u, 1)
+        u_tiled = K.tile(u_expand, [1, self.num_capsule, 1, 1])
 
-        # Replicate num_capsule dimension to prepare being multiplied by W
-        # s_tiled.shape=[None, num_capsule, input_num_capsule, input_dim_capsule]
-        s_tiled = K.tile(s_expand, [1, self.num_capsule, 1, 1])
+        # Now we want to weight the input via u*W
+        # So we expand and tile our weight matrix W into the batch_size dimension 
+        # such that we are able to multiply W with u_hat
+        # Note: This is much faster than k.map_fn
+        W_expand = K.expand_dims(self.W, 0)
+        W_tiled = K.tile(W_expand, [batch_size, 1, 1, 1, 1])
+        u_hat = K.batch_dot(u_tiled, W_tiled, [3,4])
 
-        # Compute `inputs * W` by scanning inputs_tiled on dimension 0.
-        # x.shape=[num_capsule, input_num_capsule, input_dim_capsule]
-        # W.shape=[num_capsule, input_num_capsule, dim_capsule, input_dim_capsule]
-        # Regard the first two dimensions as `batch` dimension,
-        # then matmul: [input_dim_capsule] x [dim_capsule, input_dim_capsule]^T -> [dim_capsule].
-        # s_hat.shape = [None, num_capsule, input_num_capsule, dim_capsule]
-        s_hat = K.map_fn(lambda x: K.batch_dot(x, self.W, [2, 3]), elems=s_tiled)
+        # Initialize the log prior probabilities with zero
+        b_ij = tf.zeros(shape=[K.shape(u_hat)[0], self.num_capsule, self.input_num_capsule])
 
-        # Dynamic routing
-        # The prior for coupling coefficient, initialized as zeros.
-        # b.shape = [None, self.num_capsule, self.input_num_capsule].
-        b = tf.zeros(shape=[K.shape(s_hat)[0], self.num_capsule, self.input_num_capsule])
-
-        assert self.num_routing > 0, 'The routings should be > 0.'
+        # Start with the dynamic routing algorithm
         for i in range(self.num_routing):
-            # c.shape=[batch_size, num_capsule, input_num_capsule]
-            c = tf.nn.softmax(b, dim=1)
-
-            # c.shape =  [batch_size, num_capsule, input_num_capsule]
-            # s_hat.shape=[None, num_capsule, input_num_capsule, dim_capsule]
-            # The first two dimensions as `batch` dimension,
-            # then matmal: [input_num_capsule] x [input_num_capsule, dim_capsule] -> [dim_capsule].
-            # v.shape=[None, num_capsule, dim_capsule]
-            v = squashing(K.batch_dot(c, s_hat, [2, 2]))  # [None, 10, 16]
+            c_ij = tf.nn.softmax(b_ij, dim=1)
+            s_j = K.batch_dot(c_ij, u_hat, [2, 2])  # ToDO: Is this correct? Compare with [1] line 5
+            v_j = squashing(s_j)
 
             if i < self.num_routing - 1:
-                # v.shape =  [None, num_capsule, dim_capsule]
-                # s_hat.shape=[None, num_capsule, input_num_capsule, dim_capsule]
-                # The first two dimensions as `batch` dimension,
-                # then matmal: [dim_capsule] x [input_num_capsule, dim_capsule]^T -> [input_num_capsule].
-                # b.shape=[batch_size, num_capsule, input_num_capsule]
-                b += K.batch_dot(v, s_hat, [2, 3])
+                b_ij += K.batch_dot(v_j, u_hat, [2, 3])
 
-        return v
+        return v_j
 
 
     def compute_output_shape(self, input_shape):
