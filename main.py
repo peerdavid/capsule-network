@@ -113,9 +113,10 @@ def train(model, data, args):
                                batch_size=args.batch_size, histogram_freq=int(args.debug))
     checkpoint = callbacks.ModelCheckpoint(args.save_dir + '/weights-{epoch:02d}.hdf5', monitor='val_capsnet_acc',
                                            save_best_only=True, save_weights_only=True, verbose=1)
+    lr_decay = callbacks.LearningRateScheduler(schedule=lambda epoch: args.lr * (args.lr_decay ** epoch))
 
     # compile the model
-    model.compile(optimizer=optimizers.Adam(lr=args.lr, decay=args.lr_decay),
+    model.compile(optimizer=optimizers.Adam(lr=args.lr),
                   loss=[margin_loss, reconstruction_loss],              # We scale down this reconstruction loss by 0.0005 so that
                   loss_weights=[1., args.scale_reconstruction_loss],    # ...it does not dominate the margin loss during training.
                   metrics={'capsnet': 'accuracy'})                      
@@ -134,10 +135,10 @@ def train(model, data, args):
                         steps_per_epoch=int(y_train.shape[0] / args.batch_size),
                         epochs=args.epochs,
                         validation_data=[[x_test, y_test], [y_test, x_test]],   # Note: For the decoder the input is the label and the output the image
-                        callbacks=[log, tb, checkpoint])
+                        callbacks=[log, tb, checkpoint, lr_decay])
 
-    model.save_weights(args.save_dir + '/trained_model.h5')
-    print('Trained model saved to \'%s/trained_model.h5\'' % args.save_dir)
+    model.save_weights(args.save_dir + '/trained_model.hdf5')
+    print('Trained model saved to \'%s/trained_model.hdf5\'' % args.save_dir)
 
     utils.plot_log(args.save_dir + '/log.csv', show=True)
 
@@ -202,7 +203,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', default=0.001, type=float,
                         help="Initial learning rate")
 
-    parser.add_argument('--lr_decay', default=0.0, type=float,
+    parser.add_argument('--lr_decay', default=0.9, type=float,
                         help="The value multiplied by lr at each epoch. Set a larger value for larger epochs")
 
     parser.add_argument('--scale_reconstruction_loss', default=0.0005, type=float,

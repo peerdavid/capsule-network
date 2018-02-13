@@ -60,7 +60,7 @@ class DigitCaps(Layer):
         # Start with the dynamic routing algorithm
         for i in range(self.num_routing):
             c_ij = tf.nn.softmax(b_ij, dim=1)
-            s_j = K.batch_dot(c_ij, u_hat, [2, 2])  # ToDo: Is this correct? Compare with [1] line 5
+            s_j = K.batch_dot(c_ij, u_hat, [2, 2])
             v_j = squashing(s_j)
             b_ij += K.batch_dot(v_j, u_hat, [2, 3])
 
