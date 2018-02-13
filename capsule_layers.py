@@ -26,10 +26,11 @@ class DigitCaps(Layer):
 
         # Create trainable weight variables for this layer.
         # Note: We need a W_ij with i input capsules and j output capsules.
-        #       u is of dim (None, num_capsule, dim_capsule) 
-        #       so W needs to be of shape (None, num_output_capsule, num_input_capsule, dim_output_capsule, dim_input_capsule)
+        #       u is of dim (batch_size, num_capsule, dim_capsule) 
+        #       so W needs to be of shape (batch_size, num_output_capsule, num_input_capsule, dim_output_capsule, dim_input_capsule)
+        #       where batch_size is tiled inside of call(...)
         self.W = self.add_weight(name='WeightMatrix', 
-                                      shape=(self.num_capsule, self.input_num_capsule,
+                                      shape=(1, self.num_capsule, self.input_num_capsule,
                                              self.dim_vector, self.input_dim_vector),
                                       initializer='uniform',
                                       trainable=True)
@@ -50,8 +51,7 @@ class DigitCaps(Layer):
         # So we expand and tile our weight matrix W into the batch_size dimension 
         # such that we are able to multiply W with u_hat
         # Note: This is much faster than k.map_fn
-        W_expand = K.expand_dims(self.W, 0)
-        W_tiled = K.tile(W_expand, [batch_size, 1, 1, 1, 1])
+        W_tiled = K.tile(self.W, [batch_size, 1, 1, 1, 1])
         u_hat = K.batch_dot(u_tiled, W_tiled, [3,4])
 
         # Initialize the log prior probabilities with zero
@@ -60,11 +60,9 @@ class DigitCaps(Layer):
         # Start with the dynamic routing algorithm
         for i in range(self.num_routing):
             c_ij = tf.nn.softmax(b_ij, dim=1)
-            s_j = K.batch_dot(c_ij, u_hat, [2, 2])  # ToDO: Is this correct? Compare with [1] line 5
+            s_j = K.batch_dot(c_ij, u_hat, [2, 2])  # ToDo: Is this correct? Compare with [1] line 5
             v_j = squashing(s_j)
-
-            if i < self.num_routing - 1:
-                b_ij += K.batch_dot(v_j, u_hat, [2, 3])
+            b_ij += K.batch_dot(v_j, u_hat, [2, 3])
 
         return v_j
 
@@ -75,7 +73,7 @@ class DigitCaps(Layer):
 
 
 def PrimaryCaps(layer_input, name, dim_capsule, channels, kernel_size=9, strides=2, padding='valid'):
-    """ PrimaryCaps layer can be seen as a Cinvikztuinak kayer with a different 
+    """ PrimaryCaps layer can be seen as a convolutional layer with a different 
         activation function (squashing)
 
         :param layer_input

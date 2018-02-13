@@ -10,6 +10,8 @@ from keras.utils import to_categorical
 from keras.datasets import mnist
 from keras.preprocessing.image import ImageDataGenerator
 
+from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, recall_score, precision_score
+
 import utils
 from capsule_layers import PrimaryCaps, DigitCaps, Length, Mask, margin_loss, reconstruction_loss
 
@@ -32,7 +34,7 @@ def main(args):
     (x_train, y_train), (x_test, y_test) = load_mnist()
 
     # Create model
-    model, eval_model, manipulate_model = create_model(input_shape=x_train.shape[1:],
+    model, eval_model, manipulate_model = create_capsnet(input_shape=x_train.shape[1:],
                                                   n_class=len(np.unique(np.argmax(y_train, 1))),
                                                   num_routing=args.num_routing)
     model.summary()
@@ -48,9 +50,10 @@ def main(args):
     else:
         print("\n" + "=" * 40 + " TEST =" + "=" * 40)
         if args.weights is None:
-            print('No weights are provided. Will test using random initialized weights.')
-        manipulate_latent(manipulate_model, (x_test, y_test), args)
+            print('(Warning) No weights are provided, using random initialized weights.')
+
         test(model=eval_model, data=(x_test, y_test), args=args)
+        manipulate_latent(manipulate_model, (x_test, y_test), args)
     
     print("=" * 40 + "=======" + "=" * 40)
 
@@ -67,13 +70,13 @@ def load_mnist():
     return (x_train, y_train), (x_test, y_test)
 
 
-def create_model(input_shape, n_class, num_routing):
+def create_capsnet(input_shape, n_class, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
     conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
-    primary_caps = PrimaryCaps(layer_input=conv1, name='PrimaryCaps', dim_capsule=8, channels=32, kernel_size=9, strides=2)
+    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=8, channels=32, kernel_size=9, strides=2)
     digit_caps = DigitCaps(num_capsule=n_class, dim_vector=16, num_routing=num_routing)(primary_caps)
-    out_caps = Length(name='CapsNet')(digit_caps)
+    out_caps = Length(name='capsnet')(digit_caps)
 
     # Create decoder
     y = layers.Input(shape=(n_class,))
@@ -81,11 +84,11 @@ def create_model(input_shape, n_class, num_routing):
     masked = Mask()(digit_caps)              # Mask using the capsule with maximal length for prediction
 
     # Shared Decoder model in training and prediction
-    decoder = models.Sequential(name='Decoder')
+    decoder = models.Sequential(name='decoder')
     decoder.add(layers.Dense(512, activation='relu', input_dim=16*n_class))
     decoder.add(layers.Dense(1024, activation='relu'))
     decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
-    decoder.add(layers.Reshape(target_shape=input_shape, name='DecoderOutput'))
+    decoder.add(layers.Reshape(target_shape=input_shape, name='decoder_output'))
 
     # Models for training and evaluation (prediction)
     train_model = models.Model([x, y], [out_caps, decoder(masked_by_y)])
@@ -101,13 +104,6 @@ def create_model(input_shape, n_class, num_routing):
 
 
 def train(model, data, args):
-    """
-    Training a CapsuleNet
-    :param model: the CapsuleNet model
-    :param data: a tuple containing training and testing data, like `((x_train, y_train), (x_test, y_test))`
-    :param args: arguments
-    :return: The trained model
-    """
     # unpacking the data
     (x_train, y_train), (x_test, y_test) = data
 
@@ -115,15 +111,14 @@ def train(model, data, args):
     log = callbacks.CSVLogger(args.save_dir + '/log.csv')
     tb = callbacks.TensorBoard(log_dir=args.save_dir + '/tensorboard-logs',
                                batch_size=args.batch_size, histogram_freq=int(args.debug))
-    checkpoint = callbacks.ModelCheckpoint(args.save_dir + '/weights-{epoch:02d}.h5', monitor='val_CapsNet_acc',
+    checkpoint = callbacks.ModelCheckpoint(args.save_dir + '/weights-{epoch:02d}.hdf5', monitor='val_capsnet_acc',
                                            save_best_only=True, save_weights_only=True, verbose=1)
-    lr_decay = callbacks.LearningRateScheduler(schedule=lambda epoch: args.lr * (args.lr_decay ** epoch))
 
     # compile the model
-    model.compile(optimizer=optimizers.Adam(lr=args.lr),
+    model.compile(optimizer=optimizers.Adam(lr=args.lr, decay=args.lr_decay),
                   loss=[margin_loss, reconstruction_loss],              # We scale down this reconstruction loss by 0.0005 so that
                   loss_weights=[1., args.scale_reconstruction_loss],    # ...it does not dominate the margin loss during training.
-                  metrics={'CapsNet': 'accuracy'})                      
+                  metrics={'capsnet': 'accuracy'})                      
 
     # Generator with data augmentation as used in [1]
     def train_generator_with_augmentation(x, y, batch_size, shift_fraction=0.):
@@ -139,7 +134,7 @@ def train(model, data, args):
                         steps_per_epoch=int(y_train.shape[0] / args.batch_size),
                         epochs=args.epochs,
                         validation_data=[[x_test, y_test], [y_test, x_test]],   # Note: For the decoder the input is the label and the output the image
-                        callbacks=[log, tb, checkpoint, lr_decay])
+                        callbacks=[log, tb, checkpoint])
 
     model.save_weights(args.save_dir + '/trained_model.h5')
     print('Trained model saved to \'%s/trained_model.h5\'' % args.save_dir)
@@ -150,23 +145,33 @@ def train(model, data, args):
 
 
 def test(model, data, args):
-    x_test, y_test = data
-    y_pred, x_recon = model.predict(x_test, batch_size=100)
-    print('Test accuracy:', np.sum(np.argmax(y_pred, 1) == np.argmax(y_test, 1))/y_test.shape[0])
+    x_true, y_true = data
+    y_pred, x_recon = model.predict(x_true, batch_size=100)
 
-    img = utils.combine_images(np.concatenate([x_test[:50],x_recon[:50]]))
+    y_true = np.argmax(y_true, 1)
+    y_pred = np.argmax(y_pred, 1)
+
+    print('Confusion matrix:\n', confusion_matrix(y_true, y_pred))
+    print('\nAccuracy: ', accuracy_score(y_true, y_pred))
+    print('Recall: ', recall_score(y_true, y_pred, average='weighted'))
+    print('Precision: ', precision_score(y_true, y_pred, average='weighted'))
+    print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
+
+    img = utils.combine_images(np.concatenate([x_true[:50], x_recon[:50]]))
     image = img * 255
+
+    print('\nReconstructed images are saved to %s/real_and_recon.png' % args.save_dir)
     Image.fromarray(image.astype(np.uint8)).save(args.save_dir + "/real_and_recon.png")
-    print('Reconstructed images are saved to %s/real_and_recon.png' % args.save_dir)
     plt.imshow(plt.imread(args.save_dir + "/real_and_recon.png"))
     plt.show()
 
 
 def manipulate_latent(model, data, args):
-    x_test, y_test = data
-    index = np.argmax(y_test, 1) == args.digit
+    x_true, y_true = data
+
+    index = np.argmax(y_true, 1) == args.digit
     number = np.random.randint(low=0, high=sum(index) - 1)
-    x, y = x_test[index][number], y_test[index][number]
+    x, y = x_true[index][number], y_true[index][number]
     x, y = np.expand_dims(x, 0), np.expand_dims(y, 0)
     noise = np.zeros([1, 10, 16])
     x_recons = []
@@ -197,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr', default=0.001, type=float,
                         help="Initial learning rate")
 
-    parser.add_argument('--lr_decay', default=0.9, type=float,
+    parser.add_argument('--lr_decay', default=0.0, type=float,
                         help="The value multiplied by lr at each epoch. Set a larger value for larger epochs")
 
     parser.add_argument('--scale_reconstruction_loss', default=0.0005, type=float,
