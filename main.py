@@ -146,9 +146,27 @@ def train(model, data, args):
 
 
 def test(model, data, args):
-    x_true, y_true = data
-    y_pred, x_recon = model.predict(x_true, batch_size=100)
 
+    # Create an augmentation function and cache augmented samples
+    # to be displayed later
+    x_augmented = []
+    def test_generator_with_augmentation(x, batch_size):
+        test_datagen = ImageDataGenerator(width_shift_range=0.1,
+                                          height_shift_range=0.2,
+                                          rotation_range=20)
+        generator = test_datagen.flow(x, batch_size=batch_size, shuffle=False)
+        while 1:
+            x_batch = generator.next()
+            x_augmented.extend(x_batch)
+            yield (x_batch)
+
+    # Run predictions
+    test_batch_size = 100
+    x_true, y_true = data
+    generator = test_generator_with_augmentation(x_true, test_batch_size)
+    y_pred, x_recon = model.predict_generator(generator=generator, steps=len(x_true) // test_batch_size)
+
+    # Print different metrics using the top score
     y_true = np.argmax(y_true, 1)
     y_pred = np.argmax(y_pred, 1)
 
@@ -158,7 +176,7 @@ def test(model, data, args):
     print('Precision: ', precision_score(y_true, y_pred, average='weighted'))
     print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
 
-    img = utils.combine_images(np.concatenate([x_true[:50], x_recon[:50]]))
+    img = utils.combine_images(np.concatenate([x_augmented[:50], x_recon[:50]]))
     image = img * 255
 
     print('\nReconstructed images are saved to %s/real_and_recon.png' % args.save_dir)
@@ -176,6 +194,8 @@ def manipulate_latent(model, data, args):
     x, y = np.expand_dims(x, 0), np.expand_dims(y, 0)
     noise = np.zeros([1, 10, 16])
     x_recons = []
+
+    # Change params of vect in 0.05 steps. See also [1]
     for dim in range(16):
         for r in [-0.25, -0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2, 0.25]:
             tmp = np.copy(noise)
