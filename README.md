@@ -2,7 +2,7 @@
 Kears implementation of CapsuleNet [1] based on the already existing implementations [2] and [3]. 
 
 ## Note
-* main.py can be used for both, training and testing. During tests call it via -t and -w to set the weights file
+* capsnet.py can be used for both, training and testing. During tests call it via -t and -w to set the weights file
 * Test augmentation parameters such as rotation, shift etc. can be set in the test_generator (currently its not a cmd arg)
 
 
