@@ -32,6 +32,12 @@ def main(args):
     # Load data
     (x_train, y_train), (x_test, y_test) = load_mnist()
 
+    # Cut off training samples
+    if(args.max_num_samples is not None):
+        x_train = x_train[:args.max_num_samples]
+        y_train = y_train[:args.max_num_samples]
+        print("\nUsing only %d training samples.\n" % len(x_train))
+
     # Create model
     model = create_convnet(input_shape=x_train.shape[1:],
                            n_class=len(np.unique(np.argmax(y_train, 1))))
@@ -166,6 +172,9 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', default=50, type=int)
 
     parser.add_argument('--batch_size', default=128, type=int)
+
+    parser.add_argument('--max_num_samples', default=None, type=int,
+                        help="Max. number of training examples to use. -1 to use all")
 
     parser.add_argument('--lr', default=0.001, type=float,
                         help="Initial learning rate")
