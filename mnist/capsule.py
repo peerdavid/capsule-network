@@ -4,14 +4,14 @@ from keras.engine.topology import Layer
 import tensorflow as tf
 
 
-class DigitCaps(Layer):
+class CapsuleLayer(Layer):
     def __init__(self, num_capsule, dim_vector, num_routing, **kwargs):
         self.num_capsule = num_capsule
         self.dim_vector = dim_vector
         self.num_routing = num_routing
         self.kernel_initializer = initializers.get('glorot_uniform')
 
-        super(DigitCaps, self).__init__(**kwargs)
+        super(CapsuleLayer, self).__init__(**kwargs)
 
 
     def build(self, input_shape):
@@ -35,7 +35,7 @@ class DigitCaps(Layer):
                                       initializer='uniform',
                                       trainable=True)
 
-        super(DigitCaps, self).build(input_shape)
+        super(CapsuleLayer, self).build(input_shape)
 
 
     def call(self, u, training = False):

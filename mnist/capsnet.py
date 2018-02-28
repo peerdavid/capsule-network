@@ -13,7 +13,7 @@ from keras.preprocessing.image import ImageDataGenerator
 from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, recall_score, precision_score
 
 import utils
-from capsule_layers import PrimaryCaps, DigitCaps, Length, Mask, margin_loss, reconstruction_loss
+from capsule import PrimaryCaps, CapsuleLayer, Length, Mask, margin_loss, reconstruction_loss
 
 
 #
@@ -30,6 +30,10 @@ def main(args):
     if not os.path.exists(args.save_dir):
             os.makedirs(args.save_dir)
 
+    # Save args into file 
+    with open(args.save_dir+"/args.txt", "w") as out:
+        out.write(str(args) + "\n")
+        
     # Load data
     (x_train, y_train), (x_test, y_test) = load_mnist()
 
@@ -81,7 +85,7 @@ def create_capsnet(input_shape, n_class, num_routing):
     x = layers.Input(shape=input_shape)
     conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
     primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=8, channels=32, kernel_size=9, strides=2)
-    digit_caps = DigitCaps(num_capsule=n_class, dim_vector=16, num_routing=num_routing)(primary_caps)
+    digit_caps = CapsuleLayer(num_capsule=n_class, dim_vector=16, num_routing=num_routing)(primary_caps)
     out_caps = Length(name='capsnet')(digit_caps)
 
     # Create decoder
