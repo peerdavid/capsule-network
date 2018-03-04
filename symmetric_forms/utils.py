@@ -47,8 +47,9 @@ def plot_log(filename, show=True):
         plt.show()
 
 
-def stack_images(x_augmented, x_recon, rows, cols):
-    """ Stack images together and return the image
+def stack_images_two_arrays(x_augmented, x_recon, rows, cols):
+    """ Stack images together and return the image for two arrays.
+        So the first row shows the first array and the second the second etc.
     """
     width = x_augmented[0].shape[0]
     height = x_augmented[0].shape[1]
@@ -61,5 +62,21 @@ def stack_images(x_augmented, x_recon, rows, cols):
             pos = (j * (width+5), i * (height+5) * 2)
             stacked_img.paste(img_augmented, pos)
             stacked_img.paste(img_recon, (pos[0], pos[1]+height))
+
+    return stacked_img
+
+
+def stack_images(x, rows, cols):
+    """ Stack images by row together and return the image.
+    """
+    width = x[0].shape[0]
+    height = x[0].shape[1]
+
+    stacked_img = Image.new('RGB', (cols*(height), rows*(width)))
+    for i in range(rows):
+        for j in range(cols):
+            img = Image.fromarray((x[i*rows + j]*255).astype(np.uint8))
+            pos = (j * (width), i * (height))
+            stacked_img.paste(img, pos)
 
     return stacked_img

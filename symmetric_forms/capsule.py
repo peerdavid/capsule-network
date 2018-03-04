@@ -82,8 +82,6 @@ def PrimaryCaps(layer_input, name, dim_capsule, channels, kernel_size=9, strides
         :param channels
         :param kernel_size 
     """
-    assert channels % dim_capsule == 0, "Invalid size of channels and dim_capsule"
-
     # I.e. each primary capsule contains 8 convoutional units with a 9x9 kernel and a stride of 2.
     num_filters = channels * dim_capsule
     conv_layer = layers.Conv2D(

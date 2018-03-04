@@ -21,7 +21,7 @@ from generate import generate_images
 # Set defaults
 #
 K.set_image_data_format('channels_last')
-
+capsnet_out_dim = 3
 
 #
 # Main
@@ -45,8 +45,10 @@ def main(args):
         print("\nUsing only %d training samples.\n" % len(x_train))
 
     # Create model
+    n_class = len(np.unique(np.argmax(y_train, 1)))
     model, eval_model, manipulate_model = create_capsnet(input_shape=x_train.shape[1:],
-                                                  n_class=len(np.unique(np.argmax(y_train, 1))),
+                                                  out_dim=capsnet_out_dim,
+                                                  n_class=n_class,
                                                   num_routing=args.num_routing)
     model.summary()
 
@@ -64,7 +66,7 @@ def main(args):
             print('(Warning) No weights are provided, using random initialized weights.')
 
         test(model=eval_model, data=(x_test, y_test), args=args)
-        manipulate_latent(manipulate_model, (x_test, y_test), args)
+        manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
     
     print("=" * 40 + "=======" + "=" * 40)
 
@@ -82,12 +84,12 @@ def load_dataset():
     return (x_train, y_train), (x_test, y_test)
 
 
-def create_capsnet(input_shape, n_class, num_routing):
+def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
-    conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
-    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=8, channels=32, kernel_size=9, strides=2)
-    digit_caps = CapsuleLayer(num_capsule=n_class, dim_vector=16, num_routing=num_routing)(primary_caps)
+    conv1 = layers.Conv2D(filters=32, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
+    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=3, channels=2, kernel_size=9, strides=2)
+    digit_caps = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(primary_caps)
     out_caps = Length(name='capsnet')(digit_caps)
 
     # Create decoder
@@ -97,7 +99,7 @@ def create_capsnet(input_shape, n_class, num_routing):
 
     # Shared Decoder model in training and prediction
     decoder = models.Sequential(name='decoder')
-    decoder.add(layers.Dense(512, activation='relu', input_dim=16*n_class))
+    decoder.add(layers.Dense(512, activation='relu', input_dim=out_dim*n_class))
     decoder.add(layers.Dense(1024, activation='relu'))
     decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
     decoder.add(layers.Reshape(target_shape=input_shape, name='decoder_output'))
@@ -107,7 +109,7 @@ def create_capsnet(input_shape, n_class, num_routing):
     eval_model = models.Model(x, [out_caps, decoder(masked)])
 
     # manipulate model
-    noise = layers.Input(shape=(n_class, 16))
+    noise = layers.Input(shape=(n_class, out_dim))
     noised_digit_caps = layers.Add()([digit_caps, noise])
     masked_noised_y = Mask()([noised_digit_caps, y])
     manipulate_model = models.Model([x, y, noise], decoder(masked_noised_y))
@@ -177,7 +179,7 @@ def test(model, data, args):
     x_true, y_true = data
     generator = test_generator_with_augmentation(x_true, test_batch_size, args.shift_fraction, args.rotation_range)
     y_pred, x_recon = model.predict_generator(generator=generator, steps=len(x_true) // test_batch_size)
-
+    
     # Print different metrics using the top score
     y_true = np.argmax(y_true, 1)
     y_pred = np.argmax(y_pred, 1)
@@ -190,7 +192,7 @@ def test(model, data, args):
     print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
 
     # Combine images for manual evaluation
-    stacked_img = utils.stack_images(x_augmented, x_recon, 10, 10)
+    stacked_img = utils.stack_images_two_arrays(x_augmented, x_recon, 10, 10)
     stacked_img = stacked_img.resize((500, 500), Image.ANTIALIAS)
     stacked_img.show()
     stacked_img.save(args.save_dir + "/real_and_recon.png")
@@ -203,31 +205,28 @@ def test(model, data, args):
         Image.fromarray(invalid_prediction.astype(np.uint8)).save(args.save_dir + "/wrongly_classified_%d.png" % i)
 
 
-
-def manipulate_latent(model, data, args):
+def manipulate_latent(model, n_class, out_dim, data, args):
     x_true, y_true = data
 
-    index = np.argmax(y_true, 1) == args.digit
+    index = np.argmax(y_true, 1) == args.manipulate
     number = np.random.randint(low=0, high=sum(index) - 1)
     x, y = x_true[index][number], y_true[index][number]
     x, y = np.expand_dims(x, 0), np.expand_dims(y, 0)
-    noise = np.zeros([1, 10, 16])
+    noise = np.zeros([1, n_class, out_dim])
     x_recons = []
 
     # Change params of vect in 0.05 steps. See also [1]
-    for dim in range(16):
+    for dim in range(out_dim):
         for r in [-0.25, -0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2, 0.25]:
             tmp = np.copy(noise)
             tmp[:,:,dim] = r
             x_recon = model.predict([x, y, tmp])
-            x_recons.append(x_recon)
+            x_recons.append(x_recon[0])
 
-    x_recons = np.concatenate(x_recons)
+    img = utils.stack_images(x_recons, out_dim, 11)
+    img.show()
+    img.save(args.save_dir + "/manipulate-%d.png")
 
-    img = utils.combine_images(x_recons, height=16)
-    image = img*255
-    Image.fromarray(image.astype(np.uint8)).save(args.save_dir + '/manipulate-%d.png' % args.digit)
-    print('Manipulated result saved to %s/manipulate-%d.png' % (args.save_dir, args.digit))
 
 
 #
@@ -270,6 +269,9 @@ if __name__ == "__main__":
 
     parser.add_argument('--digit', default=5, type=int,
                         help="Digit to manipulate")
+
+    parser.add_argument('--manipulate', default=0, type=int,
+                        help="Vector to manipulate")
 
     parser.add_argument('-w', '--weights', default=None,
                         help="The path of the saved weights. Should be specified when testing")
