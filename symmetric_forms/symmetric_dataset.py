@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from sklearn.cross_validation import train_test_split
 
 
-def generate_images(width=28, height=28, test_size=0.20, debug=False):
+def load_data(width=28, height=28, test_size=0.20, debug=False):
     """ Generate symmetric image dataset with houses and boats
     """ 
 

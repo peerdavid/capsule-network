@@ -14,7 +14,7 @@ from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, recall_s
 
 import utils
 from capsule import PrimaryCaps, CapsuleLayer, Length, Mask, margin_loss, reconstruction_loss
-from generate import generate_images
+from symmetric_dataset import load_data
 
 
 #
@@ -72,13 +72,14 @@ def main(args):
 
 
 def load_dataset():
-    (x_train, y_train), (x_test, y_test) = generate_images(debug=False)
+    width, height = 64, 64
+    (x_train, y_train), (x_test, y_test) = load_data(width=64, height=64, debug=False)
 
     print("Loaded %d training examples." % len(x_train))
     print("Loaded %d test examples." % len(x_test))
 
-    x_train = x_train.reshape(-1, 28, 28, 3).astype('float32') / 255.
-    x_test = x_test.reshape(-1, 28, 28, 3).astype('float32') / 255.
+    x_train = x_train.reshape(-1, width, height, 3).astype('float32') / 255.
+    x_test = x_test.reshape(-1, width, height, 3).astype('float32') / 255.
     y_train = to_categorical(y_train.astype('float32'))
     y_test = to_categorical(y_test.astype('float32'))
     return (x_train, y_train), (x_test, y_test)
@@ -88,7 +89,7 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
     conv1 = layers.Conv2D(filters=32, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
-    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=3, channels=2, kernel_size=9, strides=2)
+    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=4, channels=2, kernel_size=9, strides=2)
     digit_caps = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(primary_caps)
     out_caps = Length(name='capsnet')(digit_caps)
 
@@ -99,8 +100,8 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
 
     # Shared Decoder model in training and prediction
     decoder = models.Sequential(name='decoder')
-    decoder.add(layers.Dense(512, activation='relu', input_dim=out_dim*n_class))
-    decoder.add(layers.Dense(1024, activation='relu'))
+    decoder.add(layers.Dense(256, activation='relu', input_dim=out_dim*n_class))
+    decoder.add(layers.Dense(512, activation='relu'))
     decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
     decoder.add(layers.Reshape(target_shape=input_shape, name='decoder_output'))
 
@@ -193,7 +194,7 @@ def test(model, data, args):
 
     # Combine images for manual evaluation
     stacked_img = utils.stack_images_two_arrays(x_augmented, x_recon, 10, 10)
-    stacked_img = stacked_img.resize((500, 500), Image.ANTIALIAS)
+    stacked_img = stacked_img.resize((700, 700), Image.ANTIALIAS)
     stacked_img.show()
     stacked_img.save(args.save_dir + "/real_and_recon.png")
 
@@ -217,7 +218,7 @@ def manipulate_latent(model, n_class, out_dim, data, args):
 
     # Change params of vect in 0.05 steps. See also [1]
     for dim in range(out_dim):
-        for r in [-0.25, -0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2, 0.25]:
+        for r in [-0.5, -0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2, 0.5]:
             tmp = np.copy(noise)
             tmp[:,:,dim] = r
             x_recon = model.predict([x, y, tmp])
@@ -225,7 +226,7 @@ def manipulate_latent(model, n_class, out_dim, data, args):
 
     img = utils.stack_images(x_recons, out_dim, 11)
     img.show()
-    img.save(args.save_dir + "/manipulate-%d.png")
+    img.save(args.save_dir + "/manipulate-%d.png" % args.manipulate)
 
 
 
@@ -234,7 +235,7 @@ def manipulate_latent(model, n_class, out_dim, data, args):
 #
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Capsule Network on MNIST.")
-    parser.add_argument('--epochs', default=50, type=int)
+    parser.add_argument('--epochs', default=15, type=int)
 
     parser.add_argument('--batch_size', default=128, type=int)
 
