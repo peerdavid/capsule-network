@@ -2,7 +2,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import csv
 import math
-
+from PIL import Image
 
 def plot_log(filename, show=True):
     """ https://github.com/XifengGuo/CapsNet-Keras/blob/master/utils.py
@@ -47,24 +47,19 @@ def plot_log(filename, show=True):
         plt.show()
 
 
-def combine_images(generated_images, height=None, width=None):
-    """ https://github.com/XifengGuo/CapsNet-Keras/blob/master/utils.py
+def stack_images(x_augmented, x_recon, rows, cols):
+    """ Stack images together and return the image
     """
-    num = generated_images.shape[0]
-    if width is None and height is None:
-        width = int(math.sqrt(num))
-        height = int(math.ceil(float(num)/width))
-    elif width is not None and height is None:  # height not given
-        height = int(math.ceil(float(num)/width))
-    elif height is not None and width is None:  # width not given
-        width = int(math.ceil(float(num)/height))
+    width = x_augmented[0].shape[0]
+    height = x_augmented[0].shape[1]
+    stacked_img = Image.new('RGB', (rows*(width+5), cols*(height+5)))
+    for i in range(rows):
+        for j in range(cols):
+            img_augmented = Image.fromarray((x_augmented[i*rows + j]*255).astype(np.uint8))
+            img_recon = Image.fromarray((x_recon[i*rows + j]*255).astype(np.uint8))
+            
+            pos = (j * (width+5), i * (height+5) * 2)
+            stacked_img.paste(img_augmented, pos)
+            stacked_img.paste(img_recon, (pos[0], pos[1]+height))
 
-    shape = generated_images.shape[1:3]
-    image = np.zeros((height*shape[0], width*shape[1]),
-                     dtype=generated_images.dtype)
-    for index, img in enumerate(generated_images):
-        i = int(index/width)
-        j = index % width
-        image[i*shape[0]:(i+1)*shape[0], j*shape[1]:(j+1)*shape[1]] = \
-            img[:, :, 0]
-    return image
+    return stacked_img

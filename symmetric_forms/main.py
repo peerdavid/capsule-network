@@ -182,25 +182,26 @@ def test(model, data, args):
     y_true = np.argmax(y_true, 1)
     y_pred = np.argmax(y_pred, 1)
 
-    for i in range(len(x_true)):
-        if(y_true[i] == y_pred[i]):
-            continue
-        invalid_prediction = x_augmented[i]*255
-        Image.fromarray(invalid_prediction.astype(np.uint8)).save(args.save_dir + "invalid_%d.png" % i)
-
+    # Print metrics
     print('Confusion matrix:\n', confusion_matrix(y_true, y_pred))
     print('\nAccuracy: ', accuracy_score(y_true, y_pred))
     print('Recall: ', recall_score(y_true, y_pred, average='weighted'))
     print('Precision: ', precision_score(y_true, y_pred, average='weighted'))
     print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
 
-    img = utils.combine_images(np.concatenate([x_augmented[:50], x_recon[:50]]))
-    image = img * 255
+    # Combine images for manual evaluation
+    stacked_img = utils.stack_images(x_augmented, x_recon, 10, 10)
+    stacked_img = stacked_img.resize((500, 500), Image.ANTIALIAS)
+    stacked_img.show()
+    stacked_img.save(args.save_dir + "/real_and_recon.png")
 
-    print('\nReconstructed images are saved to %s/real_and_recon.png' % args.save_dir)
-    Image.fromarray(image.astype(np.uint8)).save(args.save_dir + "/real_and_recon.png")
-    plt.imshow(plt.imread(args.save_dir + "/real_and_recon.png"))
-    plt.show()
+    # Display invalid and correct images
+    for i in range(len(x_true)):
+        if(y_true[i] == y_pred[i]):
+            continue
+        invalid_prediction = x_augmented[i]*255
+        Image.fromarray(invalid_prediction.astype(np.uint8)).save(args.save_dir + "/wrongly_classified_%d.png" % i)
+
 
 
 def manipulate_latent(model, data, args):
