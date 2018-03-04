@@ -70,7 +70,7 @@ def main(args):
 
 
 def load_dataset():
-    (x_train, y_train), (x_test, y_test) = generate_images()
+    (x_train, y_train), (x_test, y_test) = generate_images(debug=False)
 
     print("Loaded %d training examples." % len(x_train))
     print("Loaded %d test examples." % len(x_test))
@@ -124,7 +124,7 @@ def train(model, data, args):
     tb = callbacks.TensorBoard(log_dir=args.save_dir + '/tensorboard-logs',
                                batch_size=args.batch_size, histogram_freq=int(args.debug))
     checkpoint = callbacks.ModelCheckpoint(args.save_dir + '/weights-{epoch:02d}.hdf5', monitor='val_capsnet_acc',
-                                           save_best_only=True, save_weights_only=True, verbose=1)
+                                           save_best_only=False, save_weights_only=True, verbose=1)
     lr_decay = callbacks.LearningRateScheduler(schedule=lambda epoch: args.lr * (args.lr_decay ** epoch))
 
     # compile the model
@@ -247,7 +247,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr_decay', default=0.9, type=float,
                         help="The value multiplied by lr at each epoch. Set a larger value for larger epochs")
 
-    parser.add_argument('--scale_reconstruction_loss', default=0.0005, type=float,
+    parser.add_argument('--scale_reconstruction_loss', default=0.5, type=float,
                         help="The coefficient for the loss of decoder")
 
     parser.add_argument('-r', '--num_routing', default=3, type=int,

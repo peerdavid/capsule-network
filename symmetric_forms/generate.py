@@ -3,42 +3,38 @@ import os
 import numpy as np
 import cairo
 import math
+from matplotlib import pyplot as plt
 
 from sklearn.cross_validation import train_test_split
 
-def generate_images(debug=False):
-    """ Generate symmetric image dataset
+
+def generate_images(width=28, height=28, test_size=0.20, debug=False):
+    """ Generate symmetric image dataset with houses and boats
     """ 
 
-    if debug and not os.path.exists("data"):
-            os.makedirs("data")
-
-    WIDTH, HEIGHT = 28, 28
-
-    settings = []
     # Generate 16.000 different settings
-    for isBoat in [True, False]:
+    settings = []
+    for obj in [0, 1]:
         for phi in [x / 10 for x in range(-20, 20, 1)]:
-            for width in [0.6, 0.5, 0.4, 0.3]:
-                for height in [0.2, 0.3]:
-                    for x in [-0.2, -0.1, 0.0, 0.1, 0.2]:
-                        for y in [-0.2, -0.1, 0.0, 0.1, 0.2]:
-                            settings.append((isBoat, phi, (width, height), (x, y)))
+            for obj_width in [0.6, 0.5, 0.4, 0.3]:
+                for obj_height in [0.2, 0.3]:
+                    for x in [-0.1, -0.05, 0.0, 0.05, 0.1]:
+                        for y in [-0.1, -0.05, 0.0, 0.05, 0.1]:
+                            settings.append((obj, phi, (obj_width, obj_height), (x, y)))
 
+    # Generate dataset
     x = []
     y = []
     for i in range(len(settings)):
-        isBoat, phi, size, pos = settings[i]
+        obj, phi, size, pos = settings[i]
 
-        # ToDo: Random colors
-        # ToDo: Take some images out for validation
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         ctx = cairo.Context(surface)
 
-        ctx.scale(WIDTH, HEIGHT)  # Normalizing the canvas
+        ctx.scale(width, height)  # Normalizing the canvas
         ctx.set_source_rgb(0, 0, 0)
 
-        # General configs (sharp lines etc.)
+        # General configs (sharp lines, no alpha etc.)
         ctx.paint_with_alpha(0)
         ctx.set_antialias(True)
 
@@ -46,25 +42,31 @@ def generate_images(debug=False):
         ctx.rectangle(0, 0, 1, 1)
         ctx.fill()
 
-        if isBoat:
+        # Decide which object to paint
+        if obj == 0:
             _paint_boat(ctx, math.pi / 2 * phi, pos, size)
-        else:
+        elif obj == 1:
             _paint_house(ctx, math.pi / 2 * phi, pos, size)
+        else:
+            raise NameError("Invalid object id %d." % obj)
 
         # Create rgb array out of abgr memoryview
         data = surface.get_data()
         abgr_image = np.array(data).reshape(-1, 4)
         rgb_image = abgr_image[:, 0:3][:,::-1]
 
+        # Append to dataset
         x.append(rgb_image)
-        y.append(0 if isBoat else 1)
+        y.append(obj)
 
         if debug:
-            surface.write_to_png("data/%d.png" % i)
+            img_dbg = np.array(rgb_image).reshape(width, height, 3)
+            plt.imshow(img_dbg, interpolation='nearest')
+            plt.show()
     
     # Return train and test set
     x, y = np.array(x), np.array(y)
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.33, random_state=42)
+    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=test_size, random_state=42)
     return ((x_train, y_train), (x_test, y_test))
 
 
