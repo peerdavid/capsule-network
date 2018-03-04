@@ -14,7 +14,7 @@ from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, recall_s
 
 import utils
 from capsule import PrimaryCaps, CapsuleLayer, Length, Mask, margin_loss, reconstruction_loss
-from symmetric_dataset import load_data
+import symmetric_dataset
 
 
 #
@@ -22,6 +22,8 @@ from symmetric_dataset import load_data
 #
 K.set_image_data_format('channels_last')
 capsnet_out_dim = 3
+WIDTH = 64
+HEIGHT = 64
 
 #
 # Main
@@ -65,21 +67,21 @@ def main(args):
         if args.weights is None:
             print('(Warning) No weights are provided, using random initialized weights.')
 
-        test(model=eval_model, data=(x_test, y_test), args=args)
-        manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
+        show_layer_output(model=eval_model)
+        #test(model=eval_model, data=(x_test, y_test), args=args)
+        #manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
     
     print("=" * 40 + "=======" + "=" * 40)
 
 
 def load_dataset():
-    width, height = 64, 64
-    (x_train, y_train), (x_test, y_test) = load_data(width=64, height=64, debug=False)
+    (x_train, y_train), (x_test, y_test) = symmetric_dataset.load_data(width=WIDTH, height=HEIGHT, debug=False)
 
     print("Loaded %d training examples." % len(x_train))
     print("Loaded %d test examples." % len(x_test))
 
-    x_train = x_train.reshape(-1, width, height, 3).astype('float32') / 255.
-    x_test = x_test.reshape(-1, width, height, 3).astype('float32') / 255.
+    x_train = x_train.reshape(-1, WIDTH, HEIGHT, 3).astype('float32') / 255.
+    x_test = x_test.reshape(-1, WIDTH, HEIGHT, 3).astype('float32') / 255.
     y_train = to_categorical(y_train.astype('float32'))
     y_test = to_categorical(y_test.astype('float32'))
     return (x_train, y_train), (x_test, y_test)
@@ -89,7 +91,7 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
     conv1 = layers.Conv2D(filters=32, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
-    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=4, channels=2, kernel_size=9, strides=2)
+    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=3, channels=2, kernel_size=9, strides=2)
     digit_caps = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(primary_caps)
     out_caps = Length(name='capsnet')(digit_caps)
 
@@ -100,8 +102,8 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
 
     # Shared Decoder model in training and prediction
     decoder = models.Sequential(name='decoder')
-    decoder.add(layers.Dense(256, activation='relu', input_dim=out_dim*n_class))
-    decoder.add(layers.Dense(512, activation='relu'))
+    decoder.add(layers.Dense(512, activation='relu', input_dim=out_dim*n_class))
+    decoder.add(layers.Dense(1024, activation='relu'))
     decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
     decoder.add(layers.Reshape(target_shape=input_shape, name='decoder_output'))
 
@@ -175,7 +177,8 @@ def test(model, data, args):
             x_augmented.extend(x_batch)
             yield (x_batch)
 
-    # Run predictions
+
+    # Initialize data
     test_batch_size = 32
     x_true, y_true = data
     generator = test_generator_with_augmentation(x_true, test_batch_size, args.shift_fraction, args.rotation_range)
@@ -218,16 +221,42 @@ def manipulate_latent(model, n_class, out_dim, data, args):
 
     # Change params of vect in 0.05 steps. See also [1]
     for dim in range(out_dim):
-        for r in [-0.5, -0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2, 0.5]:
+        r = 0
+        while r <= 2.5:
             tmp = np.copy(noise)
             tmp[:,:,dim] = r
             x_recon = model.predict([x, y, tmp])
             x_recons.append(x_recon[0])
+            r += 0.05
 
-    img = utils.stack_images(x_recons, out_dim, 11)
+    img = utils.stack_images(x_recons, out_dim, int(len(x_recons) / out_dim))
     img.show()
     img.save(args.save_dir + "/manipulate-%d.png" % args.manipulate)
 
+
+def show_layer_output(model):
+    """ This function can be used to debug vectors of sample data.
+        It prints what a layer outputs for an input.
+    """
+    
+    settings = (0, (0.1,0), 1.5, (0.4, 0.2))
+    x, y = symmetric_dataset.generate_image(WIDTH, HEIGHT, settings)
+
+    # Display image
+    img = Image.fromarray(np.array(x).reshape(WIDTH, HEIGHT, 3))
+    img.show()
+
+    # Reshape for model
+    x = np.array(x).reshape(-1, WIDTH, HEIGHT, 3).astype('float32') / 255
+
+    # Little bit of debugging
+    get_3rd_layer_output = K.function(
+        [model.layers[0].input], 
+        [model.layers[5].output, model.layers[6].output])
+
+    layer_output = get_3rd_layer_output([x])
+    print(layer_output[0])
+    print(layer_output[1])
 
 
 #
@@ -248,7 +277,7 @@ if __name__ == "__main__":
     parser.add_argument('--lr_decay', default=0.9, type=float,
                         help="The value multiplied by lr at each epoch. Set a larger value for larger epochs")
 
-    parser.add_argument('--scale_reconstruction_loss', default=0.5, type=float,
+    parser.add_argument('--scale_reconstruction_loss', default=1, type=float,
                         help="The coefficient for the loss of decoder")
 
     parser.add_argument('-r', '--num_routing', default=3, type=int,
