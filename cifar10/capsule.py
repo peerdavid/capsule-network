@@ -9,8 +9,8 @@ class CapsuleLayer(Layer):
         self.num_capsule = num_capsule
         self.dim_vector = dim_vector
         self.num_routing = num_routing
-        self.kernel_initializer = initializers.get('glorot_uniform')
-        #self.kernel_initializer = initializers.random_uniform(-1, 1) # With too small weights loss will be nan
+        #self.kernel_initializer = initializers.get('glorot_uniform')
+        self.kernel_initializer = initializers.random_uniform(-1, 1) # With too small weights loss will be nan
 
         super(CapsuleLayer, self).__init__(**kwargs)
 

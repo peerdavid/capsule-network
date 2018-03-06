@@ -20,7 +20,7 @@ from capsule import PrimaryCaps, CapsuleLayer, Length, Mask, margin_loss, recons
 # Set defaults
 #
 K.set_image_data_format('channels_last')
-capsnet_out_dim = 16
+capsnet_out_dim = 32
 none_of_the_above_class = 1
 
 
@@ -33,8 +33,10 @@ def main(args):
             os.makedirs(args.save_dir)
 
     # Save args into file 
-    with open(args.save_dir+"/args.txt", "w") as out:
-        out.write(str(args) + "\n")
+    if not args.testing:
+        with open(args.save_dir+"/args.txt", "w") as out:
+            sorted_args = sorted(vars(args).items())
+            out.write('\n'.join("{0} = {1}".format(a, v) for (a, v) in sorted_args))
 
     # Load data
     (x_train, y_train), (x_test, y_test), n_class = load_dataset(none_of_the_above_class)
@@ -49,7 +51,7 @@ def main(args):
 
     # Create model
     model, eval_model, manipulate_model = create_capsnet(#x_train.shape[1:],
-                                                  (24,24,3),
+                                                  (args.crop_x, args.crop_y, 3),
                                                   n_class=n_class,
                                                   out_dim=capsnet_out_dim,
                                                   num_routing=args.num_routing)
@@ -74,7 +76,7 @@ def main(args):
     print("=" * 40 + "=======" + "=" * 40)
 
 
-def load_dataset(additional_class):
+def load_dataset(with_non_of_the_above_class):
     """ Load cifar, mnist etc.
         :param additional_class 1 if a "none of the above" class should be added
     """
@@ -85,7 +87,7 @@ def load_dataset(additional_class):
     x_test = x_test.reshape(-1, 32, 32, 3).astype('float32') / 255
 
     # ... we also found that it helped to introduce a "none-of-the-above" category
-    n_class = 10 + additional_class
+    n_class = 10 + with_non_of_the_above_class
     y_train = to_categorical(y_train.astype('float32'), num_classes=n_class)
     y_test = to_categorical(y_test.astype('float32'), num_classes=n_class)
 
@@ -95,15 +97,16 @@ def load_dataset(additional_class):
 def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
-    conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
+    conv1 = layers.Conv2D(filters=64, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
     primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=8, channels=64, kernel_size=9, strides=2)
-    digit_caps = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(primary_caps)
-    out_caps = Length(name='capsnet')(digit_caps)
+    caps1 = CapsuleLayer(num_capsule=20, dim_vector=16, num_routing=num_routing)(primary_caps)
+    caps2 = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(caps1)
+    out_caps = Length(name='capsnet')(caps2)
 
     # Create decoder
     y = layers.Input(shape=(n_class,))
-    masked_by_y = Mask()([digit_caps, y])    # The true label is used to mask the output of capsule layer for training
-    masked = Mask()(digit_caps)              # Mask using the capsule with maximal length for prediction
+    masked_by_y = Mask()([caps2, y])    # The true label is used to mask the output of capsule layer for training
+    masked = Mask()(caps2)              # Mask using the capsule with maximal length for prediction
 
     # Shared Decoder model in training and prediction
     decoder = models.Sequential(name='decoder')
@@ -118,7 +121,7 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
 
     # manipulate model
     noise = layers.Input(shape=(n_class, out_dim))
-    noised_digit_caps = layers.Add()([digit_caps, noise])
+    noised_digit_caps = layers.Add()([caps2, noise])
     masked_noised_y = Mask()([noised_digit_caps, y])
     manipulate_model = models.Model([x, y, noise], decoder(masked_noised_y))
 
@@ -151,13 +154,13 @@ def train(model, data, args):
         generator = train_datagen.flow(x, y, batch_size=batch_size)
         while 1:
             x_batch, y_batch = generator.next()
-            x_batch = utils.random_crop(x_batch, [24, 24])
+            x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])
             yield ([x_batch, y_batch], [y_batch, x_batch])
 
     generator = train_generator_with_augmentation(x_train, y_train, args.batch_size, args.shift_fraction)
     
     # Validation set is always cropped the same
-    x_test_cropped = utils.center_crop(x_test, [24, 24])
+    x_test_cropped = utils.center_crop(x_test, [args.crop_x, args.crop_y])
     model.fit_generator(generator=generator,
                         steps_per_epoch=int(y_train.shape[0] / args.batch_size),
                         epochs=args.epochs,
@@ -184,7 +187,7 @@ def test(model, data, args):
         generator = test_datagen.flow(x, batch_size=batch_size, shuffle=False)
         while 1:
             x_batch = generator.next()
-            x_batch = utils.random_crop(x_batch, [24, 24])
+            x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])
             x_augmented.extend(x_batch)
             yield (x_batch)
 
@@ -225,7 +228,7 @@ def manipulate_latent(model, n_class, out_dim, data, args):
     number = np.random.randint(low=0, high=sum(index) - 1)
     x, y = x_true[index][number], y_true[index][number]
     x, y = np.expand_dims(x, 0), np.expand_dims(y, 0)
-    x = utils.random_crop(x, [24, 24])
+    x = utils.random_crop(x, [args.crop_x, args.crop_y])
 
     noise = np.zeros([1, n_class, out_dim])
     x_recons = []
@@ -271,6 +274,12 @@ if __name__ == "__main__":
 
     parser.add_argument('--shift_fraction', default=0.1, type=float,
                         help="Fraction of pixels to shift at most in each direction.")
+
+    parser.add_argument('--crop_x', default=24, type=float,
+                        help="Pixels to crop randomly into x direction.")
+
+    parser.add_argument('--crop_y', default=24, type=float,
+                        help="Pixels to crop randomly into x direction.")
 
     parser.add_argument('--debug', action='store_true',
                         help="Save weights by TensorBoard")
