@@ -23,6 +23,7 @@ K.set_image_data_format('channels_last')
 capsnet_out_dim = 16
 none_of_the_above_class = 1
 
+
 #
 # Main
 #
@@ -183,6 +184,7 @@ def test(model, data, args):
         generator = test_datagen.flow(x, batch_size=batch_size, shuffle=False)
         while 1:
             x_batch = generator.next()
+            x_batch = utils.random_crop(x_batch, [24, 24])
             x_augmented.extend(x_batch)
             yield (x_batch)
 
@@ -202,13 +204,18 @@ def test(model, data, args):
     print('Precision: ', precision_score(y_true, y_pred, average='weighted'))
     print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
 
-    img = utils.combine_images(np.concatenate([x_augmented[:50], x_recon[:50]]))
-    image = img * 255
+    # Combine images for manual evaluation
+    stacked_img = utils.stack_images_two_arrays(x_augmented, x_recon, 10, 10)
+    stacked_img = stacked_img.resize((700, 700), Image.ANTIALIAS)
+    stacked_img.show()
+    stacked_img.save(args.save_dir + "/real_and_recon.png")
 
-    print('\nReconstructed images are saved to %s/real_and_recon.png' % args.save_dir)
-    Image.fromarray(image.astype(np.uint8)).save(args.save_dir + "/real_and_recon.png")
-    plt.imshow(plt.imread(args.save_dir + "/real_and_recon.png"))
-    plt.show()
+    # Display invalid and correct images
+    for i in range(len(x_true)):
+        if(y_true[i] == y_pred[i]):
+            continue
+        invalid_prediction = x_augmented[i]*255
+        Image.fromarray(invalid_prediction.astype(np.uint8)).save(args.save_dir + "/wrongly_classified_%d.png" % i)
 
 
 def manipulate_latent(model, n_class, out_dim, data, args):
@@ -218,23 +225,24 @@ def manipulate_latent(model, n_class, out_dim, data, args):
     number = np.random.randint(low=0, high=sum(index) - 1)
     x, y = x_true[index][number], y_true[index][number]
     x, y = np.expand_dims(x, 0), np.expand_dims(y, 0)
+    x = utils.random_crop(x, [24, 24])
+
     noise = np.zeros([1, n_class, out_dim])
     x_recons = []
 
     # Change params of vect in 0.05 steps. See also [1]
     for dim in range(out_dim):
-        for r in [-0.25, -0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2, 0.25]:
+        r = -0.25
+        while r <= 0.25:
             tmp = np.copy(noise)
             tmp[:,:,dim] = r
             x_recon = model.predict([x, y, tmp])
-            x_recons.append(x_recon)
-
-    x_recons = np.concatenate(x_recons)
-
-    img = utils.combine_images(x_recons, height=out_dim)
-    image = img*255
-    Image.fromarray(image.astype(np.uint8)).save(args.save_dir + '/manipulate-%d.png' % args.manipulate)
-    print('Manipulated result saved to %s/manipulate-%d.png' % (args.save_dir, args.manipulate))
+            x_recons.append(x_recon[0])
+            r += 0.05
+    
+    img = utils.stack_images(x_recons, out_dim)
+    img.show()
+    img.save(args.save_dir + "/manipulate-%d.png" % args.manipulate)
 
 
 #

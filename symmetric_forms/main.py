@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 from keras import callbacks, layers, models, optimizers
 from keras import backend as K
@@ -22,8 +23,8 @@ import symmetric_dataset
 #
 K.set_image_data_format('channels_last')
 capsnet_out_dim = 3
-WIDTH = 64
-HEIGHT = 64
+WIDTH = 28
+HEIGHT = 28
 
 #
 # Main
@@ -67,9 +68,13 @@ def main(args):
         if args.weights is None:
             print('(Warning) No weights are provided, using random initialized weights.')
 
-        show_layer_output(model=eval_model)
-        #test(model=eval_model, data=(x_test, y_test), args=args)
-        #manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
+        show_primary_layer_output_change(model=eval_model, obj=0)
+        primary_layer_compare(model=eval_model)
+        show_digit_layer_output_phi(model=eval_model, obj=1)
+        show_digit_layer_output_pos(model=eval_model, obj=1)
+        
+        test(model=eval_model, data=(x_test, y_test), args=args)
+        manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
     
     print("=" * 40 + "=======" + "=" * 40)
 
@@ -90,7 +95,7 @@ def load_dataset():
 def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
-    conv1 = layers.Conv2D(filters=32, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
+    conv1 = layers.Conv2D(filters=64, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
     primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=3, channels=2, kernel_size=9, strides=2)
     digit_caps = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(primary_caps)
     out_caps = Length(name='capsnet')(digit_caps)
@@ -221,30 +226,153 @@ def manipulate_latent(model, n_class, out_dim, data, args):
 
     # Change params of vect in 0.05 steps. See also [1]
     for dim in range(out_dim):
-        r = 0
-        while r <= 2.5:
+        r = -0.25
+        while r <= 0.25:
             tmp = np.copy(noise)
             tmp[:,:,dim] = r
             x_recon = model.predict([x, y, tmp])
             x_recons.append(x_recon[0])
             r += 0.05
 
-    img = utils.stack_images(x_recons, out_dim, int(len(x_recons) / out_dim))
+    img = utils.stack_images(x_recons, out_dim)
     img.show()
     img.save(args.save_dir + "/manipulate-%d.png" % args.manipulate)
 
 
-def show_layer_output(model):
+def show_digit_layer_output_phi(model, obj=0):
     """ This function can be used to debug vectors of sample data.
         It prints what a layer outputs for an input.
     """
     
-    settings = (0, (0.1,0), 1.5, (0.4, 0.2))
+    # Display points in 3D plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel("DIM=1")
+    ax.set_ylabel("DIM=2")
+    ax.set_zlabel("DIM=3")
+
+    for i in range(-20, 21):
+        phi = i / 10
+        _, caps_layer_1 = get_output_for_settings(model, (obj, (0.1,0), phi, (0.4, 0.2)))
+
+        xs = [caps_layer_1[:, 0][obj]]
+        ys = [caps_layer_1[:, 1][obj]]
+        zs = [caps_layer_1[:, 2][obj]]
+        ax.scatter(xs, ys, zs, c='r', marker='o')
+
+        #if i % 5 == 0:
+        for k in range(len(xs)):
+            ax.text(xs[k], ys[k], zs[k], str(phi), color='red')
+
+    plt.show()
+
+
+def show_digit_layer_output_pos(model, obj=0):
+    """ This function can be used to debug vectors of sample data.
+        It prints what a layer outputs for an input.
+    """
+    
+    # Display points in 3D plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel("DIM=1")
+    ax.set_ylabel("DIM=2")
+    ax.set_zlabel("DIM=3")
+
+    for x in [0.0, 0.3]:
+        c = 'r' if x == 0.0 else 'b'
+
+        for i in range(-5, 6):
+            y = i / 10
+            _, caps_layer_1 = get_output_for_settings(model, (obj, (x, y), 0, (0.4, 0.2)))
+
+            xs = [caps_layer_1[:, 0][obj]]
+            ys = [caps_layer_1[:, 1][obj]]
+            zs = [caps_layer_1[:, 2][obj]]
+            ax.scatter(xs, ys, zs, c=c, marker='o')
+
+            for k in range(len(xs)):
+                ax.text(xs[k], ys[k], zs[k], "{0}:{1}".format(x, y), color=c)
+
+    plt.show()
+
+
+def show_primary_layer_output_change(model, obj=0):
+    """ This function can be used to debug vectors of sample data.
+        It prints what a layer outputs for an input.
+    """
+    
+    # Display points in 3D plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel("DIM=1")
+    ax.set_ylabel("DIM=2")
+    ax.set_zlabel("DIM=3")
+
+    caps_layer_1, _ = get_output_for_settings(model, (obj, (0.0,0.0), 0, (0.4, 0.2)))
+    caps_layer_2, _ = get_output_for_settings(model, (obj, (0.0,0.0), 1, (0.4, 0.2)))
+
+    xs1 = caps_layer_1[:, 0]
+    ys1 = caps_layer_1[:, 1]
+    zs1 = caps_layer_1[:, 2]
+    ax.scatter(xs1, ys1, zs1, c='r', marker='x')
+
+    xs2 = caps_layer_2[:, 0]
+    ys2 = caps_layer_2[:, 1]
+    zs2 = caps_layer_2[:, 2]
+    ax.scatter(xs2, ys2, zs2, c='b', marker='^')
+
+    for i in range(len(xs1)):
+        ax.plot([xs1[i], xs2[i]], [ys1[i], ys2[i]], zs=[zs1[i], zs2[i]])
+
+    # Plot 0,0,0 lines
+    ax.set_xlim3d([-1,1])
+    ax.set_ylim3d([-1,1])
+    ax.set_zlim3d([-1,1])
+
+    plt.show()
+
+
+def primary_layer_compare(model):
+    """ This function can be used to debug vectors of sample data.
+        It prints what a layer outputs for an input.
+    """
+    
+    # Display points in 3D plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel("DIM=1")
+    ax.set_ylabel("DIM=2")
+    ax.set_zlabel("DIM=3")
+
+    caps_layer_1, _ = get_output_for_settings(model, (0, (0.0,0.0), 0, (0.4, 0.2)), debug=False)
+    caps_layer_2, _ = get_output_for_settings(model, (1, (0.0,0.0), 0, (0.4, 0.2)), debug=False)
+    
+    xs1 = caps_layer_1[:, 0]
+    ys1 = caps_layer_1[:, 1]
+    zs1 = caps_layer_1[:, 2]
+    ax.scatter(xs1, ys1, zs1, c='r', marker='x')
+
+    xs2 = caps_layer_2[:, 0]
+    ys2 = caps_layer_2[:, 1]
+    zs2 = caps_layer_2[:, 2]
+    ax.scatter(xs2, ys2, zs2, c='b', marker='^')
+
+    # Plot 0,0,0 lines
+    ax.set_xlim3d([-1,1])
+    ax.set_ylim3d([-1,1])
+    ax.set_zlim3d([-1,1])
+
+    plt.show()
+
+
+def get_output_for_settings(model, settings, debug=False):
     x, y = symmetric_dataset.generate_image(WIDTH, HEIGHT, settings)
 
     # Display image
-    img = Image.fromarray(np.array(x).reshape(WIDTH, HEIGHT, 3))
-    img.show()
+    if debug:
+        img = Image.fromarray(np.array(x).reshape(WIDTH, HEIGHT, 3))
+        img.show()
 
     # Reshape for model
     x = np.array(x).reshape(-1, WIDTH, HEIGHT, 3).astype('float32') / 255
@@ -252,11 +380,11 @@ def show_layer_output(model):
     # Little bit of debugging
     get_3rd_layer_output = K.function(
         [model.layers[0].input], 
-        [model.layers[5].output, model.layers[6].output])
+        [model.layers[4].output, model.layers[5].output])
 
     layer_output = get_3rd_layer_output([x])
-    print(layer_output[0])
-    print(layer_output[1])
+    return layer_output[0][0], layer_output[1][0]
+
 
 
 #
@@ -264,9 +392,9 @@ def show_layer_output(model):
 #
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Capsule Network on MNIST.")
-    parser.add_argument('--epochs', default=15, type=int)
+    parser.add_argument('--epochs', default=50, type=int)
 
-    parser.add_argument('--batch_size', default=128, type=int)
+    parser.add_argument('--batch_size', default=32, type=int)
 
     parser.add_argument('--max_num_samples', default=None, type=int,
                         help="Max. number of training examples to use. -1 to use all")

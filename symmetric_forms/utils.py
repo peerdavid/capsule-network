@@ -66,16 +66,18 @@ def stack_images_two_arrays(x_augmented, x_recon, rows, cols):
     return stacked_img
 
 
-def stack_images(x, rows, cols):
+def stack_images(x, cols):
     """ Stack images by row together and return the image.
     """
     width = x[0].shape[0]
     height = x[0].shape[1]
+    rows = int(len(x) / cols)
 
     stacked_img = Image.new('RGB', (cols*(height), rows*(width)))
     for i in range(rows):
         for j in range(cols):
-            img = Image.fromarray((x[i*rows + j]*255).astype(np.uint8))
+            data = x[i * cols + j]
+            img = Image.fromarray((data * 255).astype(np.uint8))
             pos = (j * (width), i * (height))
             stacked_img.paste(img, pos)
 
