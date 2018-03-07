@@ -35,8 +35,11 @@ def main(args):
             os.makedirs(args.save_dir)
 
     # Save args into file 
-    with open(args.save_dir+"/args.txt", "w") as out:
-        out.write(str(args) + "\n")
+    if not args.testing:
+        with open(args.save_dir+"/args.txt", "w") as out:
+            sorted_args = sorted(vars(args).items())
+            out.write('\n'.join("{0} = {1}".format(a, v) for (a, v) in sorted_args))
+
         
     # Load data
     (x_train, y_train), (x_test, y_test) = load_dataset()

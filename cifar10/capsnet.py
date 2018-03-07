@@ -20,7 +20,7 @@ from capsule import PrimaryCaps, CapsuleLayer, Length, Mask, margin_loss, recons
 # Set defaults
 #
 K.set_image_data_format('channels_last')
-capsnet_out_dim = 32
+capsnet_out_dim = 42
 none_of_the_above_class = 1
 
 
@@ -49,9 +49,13 @@ def main(args):
         y_train = y_train[:args.max_num_samples]
         print("\nUsing only %d training samples.\n" % len(x_train))
 
+    # Calc shape depending on cropping 
+    shape = (args.crop_x, args.crop_y, x_train.shape[1:3])  \
+            if args.crop_x is not None and args.crop_y is not None \
+            else x_train.shape[1:]
+
     # Create model
-    model, eval_model, manipulate_model = create_capsnet(#x_train.shape[1:],
-                                                  (args.crop_x, args.crop_y, 3),
+    model, eval_model, manipulate_model = create_capsnet(shape,
                                                   n_class=n_class,
                                                   out_dim=capsnet_out_dim,
                                                   num_routing=args.num_routing)
@@ -98,8 +102,9 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
     conv1 = layers.Conv2D(filters=64, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
-    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=8, channels=64, kernel_size=9, strides=2)
-    caps1 = CapsuleLayer(num_capsule=20, dim_vector=16, num_routing=num_routing)(primary_caps)
+    conv2 = layers.Conv2D(filters=32, kernel_size=5, strides=1, padding='valid', activation='relu', name='conv2')(conv1)
+    primary_caps = PrimaryCaps(layer_input=conv2, name='primary_caps', dim_capsule=8, channels=64, kernel_size=9, strides=2)
+    caps1 = CapsuleLayer(num_capsule=20, dim_vector=24, num_routing=num_routing)(primary_caps)
     caps2 = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(caps1)
     out_caps = Length(name='capsnet')(caps2)
 
@@ -112,6 +117,7 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
     decoder = models.Sequential(name='decoder')
     decoder.add(layers.Dense(512, activation='relu', input_dim=out_dim*n_class))
     decoder.add(layers.Dense(1024, activation='relu'))
+    decoder.add(layers.Dense(2048, activation='relu'))
     decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
     decoder.add(layers.Reshape(target_shape=input_shape, name='decoder_output'))
 
@@ -154,17 +160,20 @@ def train(model, data, args):
         generator = train_datagen.flow(x, y, batch_size=batch_size)
         while 1:
             x_batch, y_batch = generator.next()
-            x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])
+            if args.crop_x is not None and args.crop_y is not None:
+                x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])  
             yield ([x_batch, y_batch], [y_batch, x_batch])
 
     generator = train_generator_with_augmentation(x_train, y_train, args.batch_size, args.shift_fraction)
     
     # Validation set is always cropped the same
-    x_test_cropped = utils.center_crop(x_test, [args.crop_x, args.crop_y])
+    if args.crop_x is not None and args.crop_y is not None:
+        x_test = utils.random_crop(x_test, [args.crop_x, args.crop_y])  
+
     model.fit_generator(generator=generator,
                         steps_per_epoch=int(y_train.shape[0] / args.batch_size),
                         epochs=args.epochs,
-                        validation_data=[[x_test_cropped, y_test], [y_test, x_test_cropped]],   # Note: For the decoder the input is the label and the output the image
+                        validation_data=[[x_test, y_test], [y_test, x_test]],   # Note: For the decoder the input is the label and the output the image
                         callbacks=[log, tb, checkpoint, lr_decay])
 
     model.save_weights(args.save_dir + '/trained_model.hdf5')
@@ -187,7 +196,8 @@ def test(model, data, args):
         generator = test_datagen.flow(x, batch_size=batch_size, shuffle=False)
         while 1:
             x_batch = generator.next()
-            x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])
+            if args.crop_x is not None and args.crop_y is not None:
+                x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])    
             x_augmented.extend(x_batch)
             yield (x_batch)
 
@@ -253,7 +263,7 @@ def manipulate_latent(model, n_class, out_dim, data, args):
 #
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Capsule Network on MNIST.")
-    parser.add_argument('--epochs', default=50, type=int)
+    parser.add_argument('--epochs', default=100, type=int)
 
     parser.add_argument('--batch_size', default=64, type=int)
 
@@ -275,10 +285,10 @@ if __name__ == "__main__":
     parser.add_argument('--shift_fraction', default=0.1, type=float,
                         help="Fraction of pixels to shift at most in each direction.")
 
-    parser.add_argument('--crop_x', default=24, type=float,
+    parser.add_argument('--crop_x', default=None, type=int,
                         help="Pixels to crop randomly into x direction.")
 
-    parser.add_argument('--crop_y', default=24, type=float,
+    parser.add_argument('--crop_y', default=None, type=int,
                         help="Pixels to crop randomly into x direction.")
 
     parser.add_argument('--debug', action='store_true',
