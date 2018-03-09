@@ -238,7 +238,9 @@ def manipulate_latent(model, n_class, out_dim, data, args):
     number = np.random.randint(low=0, high=sum(index) - 1)
     x, y = x_true[index][number], y_true[index][number]
     x, y = np.expand_dims(x, 0), np.expand_dims(y, 0)
-    x = utils.random_crop(x, [args.crop_x, args.crop_y])
+
+    if args.crop_x is not None and args.crop_y is not None:
+        x = utils.random_crop(x, [args.crop_x, args.crop_y])
 
     noise = np.zeros([1, n_class, out_dim])
     x_recons = []
