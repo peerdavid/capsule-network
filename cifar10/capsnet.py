@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 
+import keras
 from keras import callbacks, layers, models, optimizers
 from keras import backend as K
 from keras.utils import to_categorical
@@ -11,6 +12,10 @@ from keras.datasets import cifar10
 from keras.preprocessing.image import ImageDataGenerator
 
 from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, recall_score, precision_score
+
+import foolbox
+from foolbox.attacks import LBFGSAttack
+from foolbox.criteria import TargetClassProbability
 
 import utils
 from capsule import PrimaryCaps, CapsuleLayer, Length, Mask, margin_loss, reconstruction_loss
@@ -55,7 +60,7 @@ def main(args):
             else x_train.shape[1:]
 
     # Create model
-    model, eval_model, manipulate_model = create_capsnet(shape,
+    model, eval_model, manipulate_model, fool_model = create_capsnet(shape,
                                                   n_class=n_class,
                                                   out_dim=capsnet_out_dim,
                                                   num_routing=args.num_routing)
@@ -65,19 +70,25 @@ def main(args):
     if args.weights is not None and os.path.exists(args.weights):
         model.load_weights(args.weights)
         print("Successfully loaded weights file %s" % args.weights)
-    
-    if not args.testing:
-        print("\n" + "=" * 40 + " TRAIN " + "=" * 40)
-        train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
     else:
-        print("\n" + "=" * 40 + " TEST =" + "=" * 40)
-        if args.weights is None:
-            print('(Warning) No weights are provided, using random initialized weights.')
+        print('(Warning) No weights are provided, using random initialized weights.')
 
+    # Run test / fool / train
+    if args.testing:
+        print("\n" + "=" * 40 + " TEST =" + "=" * 40)
         test(model=eval_model, data=(x_test, y_test), args=args)
         manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
     
+    elif args.fool:
+        print("\n" + "=" * 40 + " FOOL =" + "=" * 40)
+        adversarial_attack(fool_model, x_test, y_test)
+
+    else:
+        print("\n" + "=" * 40 + " TRAIN " + "=" * 40)
+        train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
+    
     print("=" * 40 + "=======" + "=" * 40)
+
 
 
 def load_dataset(with_non_of_the_above_class):
@@ -124,6 +135,7 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Models for training and evaluation (prediction)
     train_model = models.Model([x, y], [out_caps, decoder(masked_by_y)])
     eval_model = models.Model(x, [out_caps, decoder(masked)])
+    fool_model = models.Model(x, out_caps)
 
     # manipulate model
     noise = layers.Input(shape=(n_class, out_dim))
@@ -131,7 +143,7 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
     masked_noised_y = Mask()([noised_digit_caps, y])
     manipulate_model = models.Model([x, y, noise], decoder(masked_noised_y))
 
-    return train_model, eval_model, manipulate_model
+    return train_model, eval_model, manipulate_model, fool_model
 
 
 def train(model, data, args):
@@ -260,6 +272,40 @@ def manipulate_latent(model, n_class, out_dim, data, args):
     img.save(args.save_dir + "/manipulate-%d.png" % args.manipulate)
 
 
+def adversarial_attack(fool_model, x_test, y_test):
+    keras.backend.set_learning_phase(0)
+    fmodel = foolbox.models.KerasModel(fool_model, bounds=(0, 1))
+
+    # Run the attack and create and adversarial image
+    test_id = 123
+    true_x, true_y = x_test[test_id], np.argmax(y_test[test_id])
+
+    attack = foolbox.attacks.FGSM(fmodel)
+    adv_img = attack(true_x, true_y)[:, :, ::-1] # convert BGR to RGB
+    img_diff = adv_img - true_x
+    img_diff = img_diff / abs(img_diff).max() * 0.2 + 0.5
+
+    # Now lets predict using our model and measure some criteria
+    original_prediction = np.argmax(fool_model.predict(np.array([true_x])))
+    adversarial_prediction = np.argmax(fool_model.predict(np.array([adv_img])))
+
+    mse = foolbox.distances.MeanSquaredDistance(true_x, adv_img, bounds=(0, 1))
+    msa = foolbox.distances.MeanAbsoluteDistance(true_x, adv_img, bounds=(0, 1))
+
+    print("Label: %d" % true_y)
+    print("Prediction: %d" % original_prediction)
+    print("Adversarial Prediction: %d" % adversarial_prediction)
+    print("Mean Squared Distance: " + str(mse))
+    print("Mean Absolute Distance: " + str(msa))
+    #print("Prediction Adversarial: %d" % np.argmax(fmodel.predictions(adversarial_image)))
+    
+    img = utils.stack_images([true_x, adv_img, img_diff], 3)
+    img = img.resize((img.width*5, img.height*5), Image.ANTIALIAS)
+    img.show()
+
+
+
+
 #
 # Main
 #
@@ -300,6 +346,9 @@ if __name__ == "__main__":
 
     parser.add_argument('-t', '--testing', action='store_true',
                         help="Test the trained model on testing dataset")
+    
+    parser.add_argument('-f', '--fool', action='store_true',
+                        help="Run adversarial attacks on the trained model. So provide weights via -w.")
     
     parser.add_argument('--rotation_range', default=0.0, type=float,
                         help="(TestOnly) Rotate the test dataset randomly in the given range in degrees.")
