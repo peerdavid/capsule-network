@@ -4,14 +4,19 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 
+import keras
 from keras import callbacks, layers, models, optimizers
 from keras import backend as K
 from keras.utils import to_categorical
-from keras.datasets import mnist
+from keras.datasets import cifar10
 from keras.preprocessing.image import ImageDataGenerator
 from keras.losses import categorical_crossentropy
 
 from sklearn.metrics import confusion_matrix, f1_score, accuracy_score, recall_score, precision_score
+
+import foolbox
+from foolbox.attacks import LBFGSAttack
+from foolbox.criteria import TargetClassProbability
 
 import utils
 
@@ -20,6 +25,8 @@ import utils
 # Set defaults
 #
 K.set_image_data_format('channels_last')
+none_of_the_above_class = 1
+
 
 #
 # Main
@@ -29,8 +36,20 @@ def main(args):
     if not os.path.exists(args.save_dir):
             os.makedirs(args.save_dir)
 
+    # Save args into file 
+    if not args.testing:
+        with open(args.save_dir+"/args.txt", "w") as out:
+            sorted_args = sorted(vars(args).items())
+            out.write('\n'.join("{0} = {1}".format(a, v) for (a, v) in sorted_args))
+
+    # Set learning phase for tf
+    if args.testing or args.fool:
+        keras.backend.set_learning_phase(0)
+
     # Load data
-    (x_train, y_train), (x_test, y_test) = load_mnist()
+    (x_train, y_train), (x_test, y_test), n_class = load_dataset(none_of_the_above_class)
+    print("\nNum training samples: %d"% len(x_train))
+    print("Num testing samples: %d\n" % len(x_test))
 
     # Cut off training samples
     if(args.max_num_samples is not None):
@@ -38,39 +57,52 @@ def main(args):
         y_train = y_train[:args.max_num_samples]
         print("\nUsing only %d training samples.\n" % len(x_train))
 
+    # Calc shape depending on cropping 
+    shape = (args.crop_x, args.crop_y, x_train.shape[1:3])  \
+            if args.crop_x is not None and args.crop_y is not None \
+            else x_train.shape[1:]
+
     # Create model
-    model = create_convnet(input_shape=x_train.shape[1:],
-                           n_class=len(np.unique(np.argmax(y_train, 1))))
+    model = create_convnet(input_shape=shape, n_class=n_class)
     model.summary()
 
     # Run training / testing
     if args.weights is not None and os.path.exists(args.weights):
         model.load_weights(args.weights)
         print("Successfully loaded weights file %s" % args.weights)
-    
-    if not args.testing:
+    else:
+        print('(Warning) No weights are provided, using random initialized weights.')
+
+    # Run test / fool / train
+    if args.testing:
+        print("\n" + "=" * 40 + " TEST =" + "=" * 40)
+        test(model=model, data=(x_test, y_test), args=args)
+    elif args.fool:
+        print("\n" + "=" * 40 + " FOOL =" + "=" * 40)
+        adversarial_attack(model, x_test, y_test)
+    else:
         print("\n" + "=" * 40 + " TRAIN " + "=" * 40)
         train(model=model, data=((x_train, y_train), (x_test, y_test)), args=args)
-    else:
-        print("\n" + "=" * 40 + " TEST =" + "=" * 40)
-        if args.weights is None:
-            print('(Warning) No weights are provided, using random initialized weights.')
 
-        test(model=model, data=(x_test, y_test), args=args)
+        
     
     print("=" * 40 + "=======" + "=" * 40)
 
 
-def load_mnist():
+def load_dataset(with_non_of_the_above_class):
     # the data, shuffled and split between train and test sets
     
-    (x_train, y_train), (x_test, y_test) = mnist.load_data()
+    (x_train, y_train), (x_test, y_test) = cifar10.load_data()
 
-    x_train = x_train.reshape(-1, 28, 28, 1).astype('float32') / 255.
-    x_test = x_test.reshape(-1, 28, 28, 1).astype('float32') / 255.
-    y_train = to_categorical(y_train.astype('float32'))
-    y_test = to_categorical(y_test.astype('float32'))
-    return (x_train, y_train), (x_test, y_test)
+    x_train = x_train.reshape(-1, 32, 32, 3).astype('float32') / 255
+    x_test = x_test.reshape(-1, 32, 32, 3).astype('float32') / 255
+
+    # ... we also found that it helped to introduce a "none-of-the-above" category
+    n_class = 10 + with_non_of_the_above_class
+    y_train = to_categorical(y_train.astype('float32'), num_classes=n_class)
+    y_test = to_categorical(y_test.astype('float32'), num_classes=n_class)
+
+    return (x_train, y_train), (x_test, y_test), n_class
 
 
 def create_convnet(input_shape, n_class):
@@ -114,6 +146,8 @@ def train(model, data, args):
         generator = train_datagen.flow(x, y, batch_size=batch_size)
         while 1:
             x_batch, y_batch = generator.next()
+            if args.crop_x is not None and args.crop_y is not None:
+                x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])  
             yield (x_batch, y_batch)
 
     
@@ -143,6 +177,8 @@ def test(model, data, args):
         generator = test_datagen.flow(x, batch_size=batch_size, shuffle=False)
         while 1:
             x_batch = generator.next()
+            if args.crop_x is not None and args.crop_y is not None:
+                x_batch = utils.random_crop(x_batch, [args.crop_x, args.crop_y])
             yield (x_batch)
 
 
@@ -163,6 +199,55 @@ def test(model, data, args):
     print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
 
     
+def adversarial_attack(fool_model, x_test, y_test, num_attacks=100, epsilon=0.1, debug=True):
+
+    fmodel = foolbox.models.KerasModel(fool_model, bounds=(0, 1))
+
+    # Run the attack and create and adversarial image
+    print("Run attack for epsilon = " + str(epsilon))
+    
+    num_attacks = 0
+    num_success_attacks = 0
+    for test_id in range(0, num_attacks):
+        x_true, y_true = x_test[test_id], np.argmax(y_test[test_id])
+        
+        # Run attack only if original prediciton was ok
+        y_prediction = np.argmax(fool_model.predict(np.array([x_true])))
+        if(y_prediction != y_true):
+            continue
+
+        # Run attack
+        attack = foolbox.attacks.FGSM(fmodel)
+        x_adversarial = attack(x_true, y_true, epsilons=[epsilon])
+        num_attacks += 1
+
+        # Check if an adversarial image was found
+        if x_adversarial is None:
+            continue
+        
+        # Convert into right format and get diff
+        x_adversarial = x_adversarial[:, :, ::-1]  # convert BGR to RGB
+        x_difference = x_adversarial - x_true
+        x_difference = x_difference / abs(x_difference).max() * 0.2 + 0.5
+        num_attacks += 1
+
+        # Now lets predict using our model and measure some criteria
+        y_adversarial = np.argmax(fool_model.predict(np.array([x_adversarial])))
+        if(y_adversarial != y_true):
+            num_success_attacks += 1
+
+        # Show image of attack. But at most 1 image otherwise its too much for debugging...
+        if debug:
+            img = utils.stack_images([x_true, x_adversarial, x_difference], 3)
+            img = img.resize((img.width*5, img.height*5), Image.ANTIALIAS)
+            img.show()
+            debug = False
+
+    print("Num attacks: " + str(num_attacks))
+    print("Num successfull attacks: " + str(num_success_attacks))
+    print("Successrate [%]: " + str(num_success_attacks / num_attacks * 100))
+    
+
 
 #
 # Main
@@ -188,8 +273,17 @@ if __name__ == "__main__":
     parser.add_argument('--rotation_range', default=0.0, type=float,
                         help="(TestOnly) Rotate the test dataset randomly in the given range in degrees.")
 
+    parser.add_argument('--crop_x', default=None, type=int,
+                        help="Pixels to crop randomly into x direction.")
+
+    parser.add_argument('--crop_y', default=None, type=int,
+                        help="Pixels to crop randomly into x direction.")
+
     parser.add_argument('--debug', action='store_true',
                         help="Save weights by TensorBoard")
+
+    parser.add_argument('-f', '--fool', action='store_true',
+                        help="Run adversarial attacks on the trained model. So provide weights via -w.")
 
     parser.add_argument('--save_dir', default='./result-convnet')
 
