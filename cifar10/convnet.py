@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import numpy as np
 from PIL import Image
@@ -199,16 +200,18 @@ def test(model, data, args):
     print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
 
     
-def adversarial_attack(fool_model, x_test, y_test, num_attacks=100, epsilon=0.1, debug=True):
-
-    fmodel = foolbox.models.KerasModel(fool_model, bounds=(0, 1))
+def adversarial_attack(fool_model, x_test, y_test, max_num_attacks=100, epsilon=0.01, debug=False):
 
     # Run the attack and create and adversarial image
     print("Run attack for epsilon = " + str(epsilon))
-    
+
+    fmodel = foolbox.models.KerasModel(fool_model, bounds=(0, 1))
     num_attacks = 0
     num_success_attacks = 0
-    for test_id in range(0, num_attacks):
+    for test_id in range(max_num_attacks):
+        sys.stdout.write("\rRunning attack: {0}%".format(int(test_id * 100 / max_num_attacks)))
+        sys.stdout.flush()
+
         x_true, y_true = x_test[test_id], np.argmax(y_test[test_id])
         
         # Run attack only if original prediciton was ok
@@ -229,7 +232,6 @@ def adversarial_attack(fool_model, x_test, y_test, num_attacks=100, epsilon=0.1,
         x_adversarial = x_adversarial[:, :, ::-1]  # convert BGR to RGB
         x_difference = x_adversarial - x_true
         x_difference = x_difference / abs(x_difference).max() * 0.2 + 0.5
-        num_attacks += 1
 
         # Now lets predict using our model and measure some criteria
         y_adversarial = np.argmax(fool_model.predict(np.array([x_adversarial])))
@@ -242,11 +244,15 @@ def adversarial_attack(fool_model, x_test, y_test, num_attacks=100, epsilon=0.1,
             img = img.resize((img.width*5, img.height*5), Image.ANTIALIAS)
             img.show()
             debug = False
-
-    print("Num attacks: " + str(num_attacks))
-    print("Num successfull attacks: " + str(num_success_attacks))
-    print("Successrate [%]: " + str(num_success_attacks / num_attacks * 100))
     
+    # Print results
+    if num_attacks == 0:
+        print("(Warning) No attack executed. Possible all predictions where wrong.")
+    else:
+        print("\n_______________________________________________")
+        print("Num attacks: " + str(num_attacks))
+        print("Num successfull attacks: " + str(num_success_attacks))
+        print("Successrate [%]: " + str(num_success_attacks / num_attacks * 100))
 
 
 #

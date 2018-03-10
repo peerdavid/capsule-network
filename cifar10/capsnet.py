@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import numpy as np
 from PIL import Image
@@ -42,6 +43,10 @@ def main(args):
         with open(args.save_dir+"/args.txt", "w") as out:
             sorted_args = sorted(vars(args).items())
             out.write('\n'.join("{0} = {1}".format(a, v) for (a, v) in sorted_args))
+
+    # Set learning phase for tf
+    if args.testing or args.fool:
+        keras.backend.set_learning_phase(0)
 
     # Load data
     (x_train, y_train), (x_test, y_test), n_class = load_dataset(none_of_the_above_class)
@@ -272,36 +277,59 @@ def manipulate_latent(model, n_class, out_dim, data, args):
     img.save(args.save_dir + "/manipulate-%d.png" % args.manipulate)
 
 
-def adversarial_attack(fool_model, x_test, y_test):
-    keras.backend.set_learning_phase(0)
-    fmodel = foolbox.models.KerasModel(fool_model, bounds=(0, 1))
+def adversarial_attack(fool_model, x_test, y_test, max_num_attacks=100, epsilon=0.01, debug=False):
 
     # Run the attack and create and adversarial image
-    test_id = 123
-    true_x, true_y = x_test[test_id], np.argmax(y_test[test_id])
+    print("Run attack for epsilon = " + str(epsilon))
 
-    attack = foolbox.attacks.FGSM(fmodel)
-    adv_img = attack(true_x, true_y)[:, :, ::-1] # convert BGR to RGB
-    img_diff = adv_img - true_x
-    img_diff = img_diff / abs(img_diff).max() * 0.2 + 0.5
+    fmodel = foolbox.models.KerasModel(fool_model, bounds=(0, 1))
+    num_attacks = 0
+    num_success_attacks = 0
+    for test_id in range(max_num_attacks):
+        sys.stdout.write("\rRunning attack: {0}%".format(int(test_id * 100 / max_num_attacks)))
+        sys.stdout.flush()
 
-    # Now lets predict using our model and measure some criteria
-    original_prediction = np.argmax(fool_model.predict(np.array([true_x])))
-    adversarial_prediction = np.argmax(fool_model.predict(np.array([adv_img])))
+        x_true, y_true = x_test[test_id], np.argmax(y_test[test_id])
+        
+        # Run attack only if original prediciton was ok
+        y_prediction = np.argmax(fool_model.predict(np.array([x_true])))
+        if(y_prediction != y_true):
+            continue
 
-    mse = foolbox.distances.MeanSquaredDistance(true_x, adv_img, bounds=(0, 1))
-    msa = foolbox.distances.MeanAbsoluteDistance(true_x, adv_img, bounds=(0, 1))
+        # Run attack
+        attack = foolbox.attacks.FGSM(fmodel)
+        x_adversarial = attack(x_true, y_true, epsilons=[epsilon])
+        num_attacks += 1
 
-    print("Label: %d" % true_y)
-    print("Prediction: %d" % original_prediction)
-    print("Adversarial Prediction: %d" % adversarial_prediction)
-    print("Mean Squared Distance: " + str(mse))
-    print("Mean Absolute Distance: " + str(msa))
-    #print("Prediction Adversarial: %d" % np.argmax(fmodel.predictions(adversarial_image)))
+        # Check if an adversarial image was found
+        if x_adversarial is None:
+            continue
+        
+        # Convert into right format and get diff
+        x_adversarial = x_adversarial[:, :, ::-1]  # convert BGR to RGB
+        x_difference = x_adversarial - x_true
+        x_difference = x_difference / abs(x_difference).max() * 0.2 + 0.5
+
+        # Now lets predict using our model and measure some criteria
+        y_adversarial = np.argmax(fool_model.predict(np.array([x_adversarial])))
+        if(y_adversarial != y_true):
+            num_success_attacks += 1
+
+        # Show image of attack. But at most 1 image otherwise its too much for debugging...
+        if debug:
+            img = utils.stack_images([x_true, x_adversarial, x_difference], 3)
+            img = img.resize((img.width*5, img.height*5), Image.ANTIALIAS)
+            img.show()
+            debug = False
     
-    img = utils.stack_images([true_x, adv_img, img_diff], 3)
-    img = img.resize((img.width*5, img.height*5), Image.ANTIALIAS)
-    img.show()
+    # Print results
+    if num_attacks == 0:
+        print("(Warning) No attack executed. Possible all predictions where wrong.")
+    else:
+        print("\n_______________________________________________")
+        print("Num attacks: " + str(num_attacks))
+        print("Num successfull attacks: " + str(num_success_attacks))
+        print("Successrate [%]: " + str(num_success_attacks / num_attacks * 100))
 
 
 
