@@ -200,7 +200,7 @@ def test(model, data, args):
     print('F1-Score: ', f1_score(y_true, y_pred, average='weighted'))
 
     
-def adversarial_attack(fool_model, x_test, y_test, max_num_attacks=100, epsilon=0.01, debug=False):
+def adversarial_attack(fool_model, x_test, y_test, max_num_attacks=500, epsilon=0.01, debug=False):
 
     # Run the attack and create and adversarial image
     print("Run attack for epsilon = " + str(epsilon))

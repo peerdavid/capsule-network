@@ -71,13 +71,14 @@ def main(args):
         if args.weights is None:
             print('(Warning) No weights are provided, using random initialized weights.')
 
-        show_primary_layer_output_change(model=eval_model, obj=0)
-        primary_layer_compare(model=eval_model)
-        show_digit_layer_output_phi(model=eval_model, obj=1)
-        show_digit_layer_output_pos(model=eval_model, obj=1)
+        show_primary_layer_per_position(model=eval_model)
+        #show_primary_layer_output_change(model=eval_model, obj=0)
+        #primary_layer_compare(model=eval_model)
+        #show_digit_layer_output_phi(model=eval_model, obj=1)
+        #show_digit_layer_output_pos(model=eval_model, obj=1)
         
-        test(model=eval_model, data=(x_test, y_test), args=args)
-        manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
+        #test(model=eval_model, data=(x_test, y_test), args=args)
+        #manipulate_latent(manipulate_model, n_class, capsnet_out_dim, (x_test, y_test), args)
     
     print("=" * 40 + "=======" + "=" * 40)
 
@@ -331,6 +332,42 @@ def show_primary_layer_output_change(model, obj=0):
     # Plot 0,0,0 lines
     ax.set_xlim3d([-1,1])
     ax.set_ylim3d([-1,1])
+    ax.set_zlim3d([-1,1])
+
+    plt.show()
+
+
+def show_primary_layer_per_position(model, capsule=1, dim=1, obj=0):
+    """ This function can be used to debug vectors of sample data.
+        It prints what a layer outputs for an input.
+    """
+    
+    # Display points in 3D plot
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_xlabel("DIM=1")
+    ax.set_ylabel("DIM=2")
+    ax.set_zlabel("DIM=3")
+
+    caps_layer_1, _ = get_output_for_settings(model, (obj, (0.0,0.0), 0, (0.3, 0.2)), True)
+    caps_layer_2, _ = get_output_for_settings(model, (obj, (0.0,0.1), 1, (0.3, 0.2)), True)
+
+    xs1 = caps_layer_1[:, dim]
+    xs2 = caps_layer_2[:, dim]
+
+
+    for x in range(6):      
+        for y in range(6):
+            i = x + y * 6 + capsule * 36
+            c = 'r' if capsule == 0 else 'b'
+            
+            ax.scatter([x], [y], [xs1[i]], c=c, marker='x')
+            ax.scatter([x], [y], [xs2[i]], c=c, marker='^')
+            ax.plot([x, x], [y, y], zs=[xs1[i], xs2[i]], c=c)
+
+    # Plot 0,0,0 lines
+    ax.set_xlim3d([0,5])
+    ax.set_ylim3d([0,5])
     ax.set_zlim3d([-1,1])
 
     plt.show()

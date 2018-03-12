@@ -117,23 +117,20 @@ def load_dataset(with_non_of_the_above_class):
 def create_capsnet(input_shape, n_class, out_dim, num_routing):
     # Create CapsNet
     x = layers.Input(shape=input_shape)
-    conv1 = layers.Conv2D(filters=64, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
-    conv2 = layers.Conv2D(filters=32, kernel_size=5, strides=1, padding='valid', activation='relu', name='conv2')(conv1)
-    primary_caps = PrimaryCaps(layer_input=conv2, name='primary_caps', dim_capsule=8, channels=64, kernel_size=9, strides=2)
-    caps1 = CapsuleLayer(num_capsule=20, dim_vector=24, num_routing=num_routing)(primary_caps)
-    caps2 = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(caps1)
-    out_caps = Length(name='capsnet')(caps2)
+    conv1 = layers.Conv2D(filters=256, kernel_size=9, strides=1, padding='valid', activation='relu', name='conv1')(x)
+    primary_caps = PrimaryCaps(layer_input=conv1, name='primary_caps', dim_capsule=8, channels=64, kernel_size=9, strides=2)
+    caps1 = CapsuleLayer(num_capsule=n_class, dim_vector=out_dim, num_routing=num_routing)(primary_caps)
+    out_caps = Length(name='capsnet')(caps1)
 
     # Create decoder
     y = layers.Input(shape=(n_class,))
-    masked_by_y = Mask()([caps2, y])    # The true label is used to mask the output of capsule layer for training
-    masked = Mask()(caps2)              # Mask using the capsule with maximal length for prediction
+    masked_by_y = Mask()([caps1, y])    # The true label is used to mask the output of capsule layer for training
+    masked = Mask()(caps1)              # Mask using the capsule with maximal length for prediction
 
     # Shared Decoder model in training and prediction
     decoder = models.Sequential(name='decoder')
     decoder.add(layers.Dense(512, activation='relu', input_dim=out_dim*n_class))
     decoder.add(layers.Dense(1024, activation='relu'))
-    decoder.add(layers.Dense(2048, activation='relu'))
     decoder.add(layers.Dense(np.prod(input_shape), activation='sigmoid'))
     decoder.add(layers.Reshape(target_shape=input_shape, name='decoder_output'))
 
@@ -144,7 +141,7 @@ def create_capsnet(input_shape, n_class, out_dim, num_routing):
 
     # manipulate model
     noise = layers.Input(shape=(n_class, out_dim))
-    noised_digit_caps = layers.Add()([caps2, noise])
+    noised_digit_caps = layers.Add()([caps1, noise])
     masked_noised_y = Mask()([noised_digit_caps, y])
     manipulate_model = models.Model([x, y, noise], decoder(masked_noised_y))
 
@@ -277,7 +274,7 @@ def manipulate_latent(model, n_class, out_dim, data, args):
     img.save(args.save_dir + "/manipulate-%d.png" % args.manipulate)
 
 
-def adversarial_attack(fool_model, x_test, y_test, max_num_attacks=100, epsilon=0.01, debug=False):
+def adversarial_attack(fool_model, x_test, y_test, max_num_attacks=500, epsilon=0.01, debug=False):
 
     # Run the attack and create and adversarial image
     print("Run attack for epsilon = " + str(epsilon))
